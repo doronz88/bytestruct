@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-PAGES = sorted((ROOT / "docs").glob("*.md")) + [ROOT / "README.md"]
+PAGES = [*sorted((ROOT / "docs").glob("*.md")), ROOT / "README.md"]
 BLOCK = re.compile(r"^(?P<marker><!-- docs-test: skip -->\n+)?```python\n(?P<code>.*?)^```$", re.MULTILINE | re.DOTALL)
 
 
@@ -55,9 +55,9 @@ def test_every_page_has_examples() -> None:
 @pytest.mark.parametrize("page", PAGES, ids=[page.name for page in PAGES])
 def test_examples_run(page: Path) -> None:
     examples = _examples(page)
-    if any(re.search(r"^\s*(import|from) construct\b", code, re.MULTILINE) for _, code in examples):
-        if importlib.util.find_spec("construct") is None:
-            pytest.skip("construct is not installed")
+    needs_construct = any(re.search(r"^\s*(import|from) construct\b", code, re.MULTILINE) for _, code in examples)
+    if needs_construct and importlib.util.find_spec("construct") is None:
+        pytest.skip("construct is not installed")
     # A real module, so that dataclasses and typing.get_type_hints can resolve the examples' classes.
     module = types.ModuleType(f"docs_example_{page.stem.replace('-', '_')}")
     sys.modules[module.__name__] = module
