@@ -448,9 +448,10 @@ class Bytes(Format):
 
 
 class PaddedString(Format):
-    """A fixed-size field holding a NUL-terminated UTF-8 string followed by arbitrary bytes (parse only).
+    """A fixed-size field holding a NUL-terminated UTF-8 string followed by arbitrary bytes.
 
-    ``errors`` is the UTF-8 decoding error handler (e.g. ``"replace"`` for names cut mid-character).
+    ``errors`` is the UTF-8 decoding error handler (e.g. ``"replace"`` for names cut mid-character). Building
+    NUL-pads the encoded string to the field size; it must leave room for the terminator.
     """
 
     def __init__(self, size: int, errors: str = "strict") -> None:
@@ -467,15 +468,26 @@ class PaddedString(Format):
         except UnicodeDecodeError as e:
             raise BinaryParseError(f"invalid UTF-8 in C string field: {e}") from e
 
+    def encode(self, value: Any) -> bytes:
+        encoded = value.encode("utf-8")
+        if b"\0" in encoded:
+            raise BinaryBuildError("C string contains a NUL byte")
+        if len(encoded) >= self.size:
+            raise BinaryBuildError(f"C string of {len(encoded)} bytes does not fit its {self.size}-byte field")
+        return encoded
+
 
 class Uuid(Format):
-    """A 16-byte UUID field, parsed into a :class:`uuid.UUID` (parse only)."""
+    """A 16-byte UUID field, parsed into a :class:`uuid.UUID`."""
 
     def __init__(self) -> None:
         super().__init__("16s")
 
     def decode(self, value: Any) -> uuid.UUID:
         return uuid.UUID(bytes=value)
+
+    def encode(self, value: Any) -> bytes:
+        return value.bytes
 
 
 class IPAddress(Format):
@@ -493,7 +505,7 @@ class IPAddress(Format):
 
 
 class Array(Format):
-    """A fixed-length array of a plain number type, parsed into a list (parse only):
+    """A fixed-length array of a plain number type, parsed into a list:
     ``Annotated[list[int], Array(u64, 6)]``. Elements are little-endian unless their alias pins a byte order."""
 
     def __init__(self, element: Any, count: int) -> None:
@@ -504,6 +516,14 @@ class Array(Format):
 
     def decode(self, value: Any) -> list[Any]:
         return list(self.struct.unpack(value))
+
+    def encode(self, value: Any) -> bytes:
+        if len(value) != self.count:
+            raise BinaryBuildError(f"expected {self.count} elements, got {len(value)}")
+        try:
+            return self.struct.pack(*value)
+        except (struct.error, OverflowError) as e:
+            raise BinaryBuildError(f"cannot encode: {e}") from e
 
 
 class Const:

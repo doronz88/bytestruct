@@ -211,6 +211,13 @@ def test_padded_string() -> None:
         Named.parse(b"\xc3\0\0\0" + b"\0\0\0\0")
     assert invalid.value.field == "name"
 
+    assert Named("ab", "é").build() == b"ab\0\0" + "é".encode() + b"\0\0"
+    with pytest.raises(BinaryBuildError, match="does not fit") as too_long:
+        Named("abcd", "").build()
+    assert too_long.value.field == "name"
+    with pytest.raises(BinaryBuildError, match="NUL byte"):
+        Named("a\0b", "").build()
+
 
 def test_uuid_ip_and_array_fields() -> None:
     @dataclass
@@ -232,6 +239,10 @@ def test_uuid_ip_and_array_fields() -> None:
     assert Extras.parse(raw) == Extras(
         uuid.UUID(int=1), ipaddress.IPv4Address("10.0.0.1"), ipaddress.IPv6Address("fe80::1"), [1, 2, 0x102], [5]
     )
+    assert Extras.parse(raw).build() == raw
+    with pytest.raises(BinaryBuildError, match="expected 3 elements") as short:
+        Extras(uuid.UUID(int=1), ipaddress.IPv4Address("10.0.0.1"), ipaddress.IPv6Address("::1"), [1], [5]).build()
+    assert short.value.field == "counts"
 
     @dataclass
     class V4(BinaryStruct):
