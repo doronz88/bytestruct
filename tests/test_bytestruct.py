@@ -7,9 +7,11 @@ from typing import Annotated
 
 import pytest
 
+import bytestruct
 from bytestruct import (
     CSTRING,
     GREEDY_BYTES,
+    GREEDY_STRING,
     PASS,
     U8,
     U16_BE,
@@ -24,6 +26,8 @@ from bytestruct import (
     Bytes,
     Const,
     CString,
+    Format,
+    GreedyString,
     OpenIntEnum,
     PaddedString,
     Prefixed,
@@ -509,3 +513,78 @@ def test_errors_are_value_errors() -> None:
     assert BinaryDataError.__mro__[1:] == (ValueError, *ValueError.__mro__[1:])
     with pytest.raises(ValueError, match="at offset 0"):
         U32_LE.parse(b"")
+
+
+@pytest.mark.parametrize(
+    ("name", "fmt"),
+    [
+        (f"{kind}{bits}_{order}", f"{'<' if order == 'LE' else '>'}{code}")
+        for kind, bits, code in [
+            ("U", 16, "H"),
+            ("U", 32, "I"),
+            ("U", 64, "Q"),
+            ("I", 16, "h"),
+            ("I", 32, "i"),
+            ("I", 64, "q"),
+            ("F", 32, "f"),
+            ("F", 64, "d"),
+        ]
+        for order in ("LE", "BE")
+    ],
+)
+def test_every_sized_scalar_exists(name: str, fmt: str) -> None:
+    scalar = getattr(bytestruct, name)
+    assert name in bytestruct.__all__
+    assert scalar.format == fmt
+    assert scalar.parse(scalar.build(1)) == 1
+
+
+def test_greedy_string() -> None:
+    assert GREEDY_STRING.build("hé") == b"h\xc3\xa9"
+    assert GREEDY_STRING.parse(b"h\xc3\xa9") == "hé"
+    pascal = Prefixed(U16_BE, GREEDY_STRING)
+    assert pascal.build("ab") == b"\x00\x02ab"
+    reader = ByteReader(b"\x00\x02ab" + b"next")
+    assert pascal.read(reader) == "ab"
+    assert reader.read_all() == b"next"
+    with pytest.raises(BinaryParseError, match="invalid UTF-8") as invalid:
+        pascal.read(ByteReader(b"x\x00\x01\xff", offset=1, base=10))
+    assert invalid.value.offset == 13
+    assert GreedyString(errors="replace").parse(b"\xff") == "\ufffd"
+    with pytest.raises(BinaryBuildError):
+        GREEDY_STRING.build("\udcff")
+
+
+class Octal(Format):
+    """An ASCII-octal number in a fixed-size field (as in cpio headers)."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__(f"{size}s")
+        self.size = size
+
+    def decode(self, value: bytes) -> int:
+        try:
+            return int(value, 8)
+        except ValueError as e:
+            raise BinaryParseError(f"invalid octal number {value!r}") from e
+
+    def encode(self, value: int) -> bytes:
+        digits = b"%o" % value
+        if len(digits) > self.size:
+            raise BinaryBuildError(f"{value:#o} does not fit {self.size} octal digits")
+        return digits.rjust(self.size, b"0")
+
+
+def test_custom_format() -> None:
+    @dataclass
+    class CpioHeader(BinaryStruct):
+        magic: Annotated[bytes, Bytes(6), Const(b"070707")] = field(default=b"070707", init=False)
+        mode: Annotated[int, Octal(6)]
+
+    assert CpioHeader(0o100644).build() == b"070707100644"
+    assert CpioHeader.parse(b"070707100644") == CpioHeader(0o100644)
+    with pytest.raises(BinaryParseError) as invalid:
+        CpioHeader.parse(b"070707abcdef")
+    assert str(invalid.value) == "CpioHeader.mode at offset 6: invalid octal number b'abcdef'"
+    with pytest.raises(BinaryBuildError, match=r"^CpioHeader\.mode: 0o10000000 does not fit"):
+        CpioHeader(0o10000000).build()

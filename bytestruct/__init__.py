@@ -215,18 +215,38 @@ class Scalar(struct.Struct):
 
 U8 = Scalar("B")
 """An unsigned 8-bit integer."""
+U16_LE = Scalar("<H")
+"""A little-endian unsigned 16-bit integer."""
 U16_BE = Scalar(">H")
 """A big-endian unsigned 16-bit integer."""
 U32_LE = Scalar("<I")
 """A little-endian unsigned 32-bit integer."""
-I32_LE = Scalar("<i")
-"""A little-endian signed 32-bit integer."""
+U32_BE = Scalar(">I")
+"""A big-endian unsigned 32-bit integer."""
 U64_LE = Scalar("<Q")
 """A little-endian unsigned 64-bit integer."""
+U64_BE = Scalar(">Q")
+"""A big-endian unsigned 64-bit integer."""
+I16_LE = Scalar("<h")
+"""A little-endian signed 16-bit integer."""
+I16_BE = Scalar(">h")
+"""A big-endian signed 16-bit integer."""
+I32_LE = Scalar("<i")
+"""A little-endian signed 32-bit integer."""
+I32_BE = Scalar(">i")
+"""A big-endian signed 32-bit integer."""
 I64_LE = Scalar("<q")
 """A little-endian signed 64-bit integer."""
+I64_BE = Scalar(">q")
+"""A big-endian signed 64-bit integer."""
+F32_LE = Scalar("<f")
+"""A little-endian IEEE 754 single."""
+F32_BE = Scalar(">f")
+"""A big-endian IEEE 754 single."""
 F64_LE = Scalar("<d")
 """A little-endian IEEE 754 double."""
+F64_BE = Scalar(">d")
+"""A big-endian IEEE 754 double."""
 
 
 class Pass(CodecBase[None]):
@@ -281,10 +301,38 @@ class CString(CodecBase[str]):
             raise BinaryBuildError(f"cannot encode {value!r}: {e}") from e
 
 
+class GreedyString(CodecBase[str]):
+    """Every remaining byte (of the enclosing :class:`Prefixed`, or of the buffer), as a UTF-8 string.
+
+    ``Prefixed(U16_BE, GREEDY_STRING)`` is a length-prefixed string (construct's ``PascalString``). ``errors``
+    is the UTF-8 decoding error handler (e.g. ``"replace"``).
+    """
+
+    def __init__(self, errors: str = "strict") -> None:
+        self.errors = errors
+
+    def read(self, reader: ByteReader) -> str:
+        """Parse one value at the reader's offset and advance past it."""
+        start = reader.absolute
+        try:
+            return reader.read_all().decode("utf-8", self.errors)
+        except UnicodeDecodeError as e:
+            raise BinaryParseError(f"invalid UTF-8 in string: {e}", offset=start) from e
+
+    def build(self, value: str) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
+        try:
+            return value.encode("utf-8")
+        except UnicodeEncodeError as e:
+            raise BinaryBuildError(f"cannot encode {value!r}: {e}") from e
+
+
 PASS = Pass()
 """The :class:`Pass` codec."""
 GREEDY_BYTES = GreedyBytes()
 """The :class:`GreedyBytes` codec."""
+GREEDY_STRING = GreedyString()
+"""A strict :class:`GreedyString` codec."""
 CSTRING = CString()
 """A strict :class:`CString` codec."""
 
@@ -450,8 +498,9 @@ class OpenIntEnum(enum.IntEnum):
 class Format:
     """Field annotation metadata: a single-value ``struct`` code, optionally pinned to a byte order.
 
-    Subclasses override ``decode`` (unpacked value -> field value, raising :class:`BinaryParseError`) and/or
-    ``encode`` (the reverse, raising :class:`BinaryBuildError`); only overridden ones are called.
+    ``Annotated[int, Format("H")]`` is how ``u16`` is defined. Subclasses define custom fixed-size field types by
+    overriding ``decode`` (unpacked value -> field value, raising :class:`BinaryParseError`) and/or ``encode``
+    (the reverse, raising :class:`BinaryBuildError`); only overridden ones are called.
     """
 
     def __init__(self, code: str, byte_order: Optional[str] = None) -> None:
@@ -915,14 +964,25 @@ class BinaryStruct:
 
 __all__ = [
     "CSTRING",
+    "F32_BE",
+    "F32_LE",
+    "F64_BE",
     "F64_LE",
     "GREEDY_BYTES",
+    "GREEDY_STRING",
+    "I16_BE",
+    "I16_LE",
+    "I32_BE",
     "I32_LE",
+    "I64_BE",
     "I64_LE",
     "PASS",
     "U8",
     "U16_BE",
+    "U16_LE",
+    "U32_BE",
     "U32_LE",
+    "U64_BE",
     "U64_LE",
     "Aligned",
     "Array",
@@ -937,7 +997,9 @@ __all__ = [
     "Codec",
     "CodecBase",
     "Const",
+    "Format",
     "GreedyBytes",
+    "GreedyString",
     "OpenIntEnum",
     "PaddedString",
     "Pass",
