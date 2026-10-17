@@ -8,6 +8,7 @@ copyright: Licensed under MIT
 
 theme:
   name: material
+  custom_dir: overrides
   logo: assets/logo.svg
   favicon: assets/logo.svg
   icon:
