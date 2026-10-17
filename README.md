@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://doronz88.github.io/bytestruct/assets/logo.svg" alt="bytestruct logo" width="128">
+</p>
+
 # bytestruct
 
 [![Python application](https://github.com/doronz88/bytestruct/workflows/Python%20application/badge.svg)](https://github.com/doronz88/bytestruct/actions/workflows/python-app.yml "Python application action")
