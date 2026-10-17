@@ -38,7 +38,8 @@ import operator
 import struct
 import sys
 import uuid
-from collections.abc import Mapping
+import weakref
+from collections.abc import Mapping, Sequence
 from typing import (
     Annotated,
     Any,
@@ -723,9 +724,15 @@ class _EnumFormat(Format):
     def __init__(self, base: Format, enum_type: type[enum.Enum]) -> None:
         super().__init__(base.code, base.byte_order)
         self.enum_type = enum_type
+        # The enum's own value -> member map: a lookup costs a fraction of ``enum_type(value)``. Values that are
+        # not in it (unknown ones, an ``OpenIntEnum``'s first sighting of one, combined flags) take the call.
+        self._members = enum_type._value2member_map_
 
     def decode(self, value: Any) -> Any:
         """Convert the unpacked integer to the enum, raising :class:`BinaryParseError` for an unknown value."""
+        member = self._members.get(value)
+        if member is not None:
+            return member
         try:
             return self.enum_type(value)
         except ValueError as e:
@@ -813,7 +820,9 @@ def _layout(cls: type, byte_order: str) -> tuple[list[_Field], list[_CodecField]
         if isinstance(fmt, Array):
             fmt = fmt.in_record(byte_order)
         field_struct = struct.Struct((fmt.byte_order or byte_order) + fmt.code)
-        spec = cls.__dict__.get(name)
+        # ``@dataclass(slots=True)`` recreates the class without the ``field()`` specs in its namespace (the new class
+        # is compiled again); its ``__dataclass_fields__`` still has them.
+        spec = cls.__dict__.get("__dataclass_fields__", {}).get(name) or cls.__dict__.get(name)
         init = not isinstance(spec, dataclasses.Field) or spec.init
         fields.append(_Field(len(fields), name, fmt, field_struct, offset, const, init))
         offset += field_struct.size
@@ -845,6 +854,16 @@ def _tuple_getter(names: list[str]) -> Callable[[Any], tuple[Any, ...]]:
     return operator.attrgetter(*names)
 
 
+def _tuple_itemgetter(indices: list[int]) -> Callable[[Sequence[Any]], tuple[Any, ...]]:
+    """``operator.itemgetter`` that always returns a tuple (with one index it returns the bare value)."""
+    if not indices:
+        return lambda values: ()
+    if len(indices) == 1:
+        single = operator.itemgetter(indices[0])
+        return lambda values: (single(values),)
+    return operator.itemgetter(*indices)
+
+
 def _show(value: Any) -> str:
     """Integers (magics, versions, tags) read best in hex."""
     return hex(value) if isinstance(value, int) and not isinstance(value, bool) else repr(value)
@@ -868,15 +887,13 @@ class BinaryStruct:
     _encoders: ClassVar[tuple[_Field, ...]]  # non-constant fields whose format converts values before packing
     _getter: ClassVar[Callable[[Any], tuple[Any, ...]]]  # instance -> its fixed-size field values
     _init_indices: ClassVar[Optional[list[int]]]  # the fixed-size fields passed to ``__init__``, if not all of them
-    _plain: ClassVar[bool]  # parse is a single unpack straight into ``__init__``
-    _plain_build: ClassVar[bool]  # build is a single pack of the field values
 
     def __init_subclass__(cls, byte_order: str = "<", **kwargs: Any) -> None:
         """Compile the record: runs once per class, when the ``class`` statement executes (before ``@dataclass``).
 
         It lays out the fields, groups them into one ``struct.Struct`` per byte-order run, precomputes the
-        constant, decoder and encoder lists, and picks the ``_plain``/``_plain_build`` fast paths. See
-        docs/how-it-works.md for the walkthrough.
+        constant, decoder and encoder lists, and gives the record dedicated ``parse``/``read``/``build`` when its
+        shape allows (:func:`_specialize`). See docs/how-it-works.md for the walkthrough.
         """
         super().__init_subclass__(**kwargs)
         if cls.__bases__ != (BinaryStruct,):
@@ -892,19 +909,12 @@ class BinaryStruct:
         cls.SIZE = sum(f.struct.size for f in fields)
         cls._getter = _tuple_getter([f.name for f in fields])  # pyright: ignore[reportAttributeAccessIssue]
         cls._init_indices = None if all(f.init for f in fields) else [f.index for f in fields if f.init]
-        cls._plain = (
-            len(cls._runs) == 1
-            and not cls._consts
-            and not cls._decoders
-            and cls._init_indices is None
-            and not cls._codec_fields
-        )
-        cls._plain_build = len(cls._runs) == 1 and not cls._consts and not cls._encoders
         if cls._consts:
             # ``attrgetter`` returns the bare value for one name and a tuple for several; compare likewise.
             cls._const_getter = operator.attrgetter(*(f.name for f in cls._consts))
             consts = [f.const for f in cls._consts]
             cls._const_values = consts[0] if len(consts) == 1 else tuple(consts)
+        _specialize(cls)
 
     @classmethod
     def parse(cls, data: BytesLike) -> Self:
@@ -934,10 +944,6 @@ class BinaryStruct:
     @classmethod
     def _parse(cls, data: BytesLike, start: int, end: int, base: int) -> Self:
         """Parse at ``data[start:end]``; ``base + start`` is that position's absolute offset (for errors)."""
-        if cls._plain:
-            if end - start < cls.SIZE:
-                cls._raise_short(data, start, end, base)
-            return cls(*cls._runs[0].struct.unpack_from(data, start))
         return cls(*cls._unpack(data, start, end, base))
 
     @classmethod
@@ -1004,11 +1010,6 @@ class BinaryStruct:
     def _build_fixed(self) -> bytes:
         """Encode the fixed-size fields: check the constants, run the encoders, then pack each run."""
         cls = type(self)
-        if cls._plain_build:
-            try:
-                return cls._runs[0].struct.pack(*cls._getter(self))
-            except (struct.error, OverflowError) as e:
-                raise BinaryBuildError(f"cannot encode: {e}", record=cls.__name__) from e
         if cls._consts and cls._const_getter(self) != cls._const_values:
             field = next(f for f in cls._consts if getattr(self, f.name) != f.const)
             raise BinaryBuildError(
@@ -1030,6 +1031,125 @@ class BinaryStruct:
             return b"".join([run.struct.pack(*values[run.first : run.first + run.count]) for run in cls._runs])
         except (struct.error, OverflowError) as e:
             raise BinaryBuildError(f"cannot encode: {e}", record=cls.__name__) from e
+
+
+# The functions ``_specialize`` installed. When ``@dataclass(slots=True)`` recreates a record class, the new class
+# inherits them in its namespace and gets its own; a ``parse``/``read``/``build`` the record defines is kept.
+_specialized: "weakref.WeakSet[Callable[..., Any]]" = weakref.WeakSet()
+
+
+def _install(cls: type[BinaryStruct], name: str, function: Callable[..., Any], wrap: Callable[[Any], Any]) -> None:
+    current = cls.__dict__.get(name)
+    if current is not None and getattr(current, "__func__", current) not in _specialized:
+        return
+    _specialized.add(function)
+    setattr(cls, name, wrap(function))
+
+
+def _specialize(cls: type[BinaryStruct]) -> None:
+    """Give a record without codec fields its own ``parse``, ``read`` and ``build``.
+
+    The generic methods decide on every call what the record needs (constants? decoders? ``init=False``
+    fields?); these closures have the answers baked in. The commonest shape, one byte-order run without
+    decoders, parses with a single ``unpack_from`` into ``__init__``; records with decoders or several runs get
+    a closure doing the generic steps without the per-call dispatch. Building is specialized for one run
+    without encoders; records with codec fields keep the generic methods.
+    """
+    if cls._codec_fields:
+        return
+    size = cls.SIZE
+    consts = cls._consts
+    # ``itemgetter`` returns the bare value for one index and a tuple for several, like ``_const_values``.
+    const_getter = operator.itemgetter(*(f.index for f in consts)) if consts else None
+    const_values = cls._const_values if consts else None
+    init_indices = cls._init_indices
+    select = None if init_indices is None else _tuple_itemgetter(init_indices)
+
+    def check_consts(values: Sequence[Any], record_offset: int) -> None:
+        field = next(f for f in consts if values[f.index] != f.const)
+        raise cls._const_error(field, values[field.index], record_offset)
+
+    raise_short = cls._raise_short
+    if not cls._decoders and len(cls._runs) == 1:
+        unpack_from = cls._runs[0].struct.unpack_from
+
+        def parse(data: BytesLike) -> Any:
+            try:
+                values = unpack_from(data)
+            except struct.error:
+                raise_short(data, 0, len(data), 0)
+            if const_getter is not None and const_getter(values) != const_values:
+                check_consts(values, 0)
+            return cls(*values) if select is None else cls(*select(values))
+
+        def read(reader: ByteReader) -> Any:
+            start = reader.offset
+            data = reader.data
+            if reader.end - start < size:
+                raise_short(data, start, reader.end, reader.base)
+            values = unpack_from(data, start)
+            if const_getter is not None and const_getter(values) != const_values:
+                check_consts(values, reader.base + start)
+            record = cls(*values) if select is None else cls(*select(values))
+            reader.offset = start + size
+            return record
+
+        _install(cls, "parse", parse, staticmethod)
+        _install(cls, "read", read, staticmethod)
+    else:
+        runs = [(r.struct.unpack_from, r.offset) for r in cls._runs]
+        decoders = [(f.index, f.fmt.decode, f) for f in cls._decoders]
+
+        def arguments(data: BytesLike, start: int, record_offset: int) -> Any:
+            if len(runs) == 1:
+                values = list(runs[0][0](data, start))
+            else:
+                values: list[Any] = []
+                for unpack_run, offset in runs:
+                    values.extend(unpack_run(data, start + offset))
+            if const_getter is not None and const_getter(values) != const_values:
+                check_consts(values, record_offset)
+            for index, decode, field in decoders:
+                try:
+                    values[index] = decode(values[index])
+                except BinaryParseError as e:
+                    raise e.located(record=cls.__name__, field=field.name, offset=record_offset + field.offset) from e
+            return values if select is None else select(values)
+
+        def parse_general(data: BytesLike) -> Any:
+            if len(data) < size:
+                raise_short(data, 0, len(data), 0)
+            return cls(*arguments(data, 0, 0))
+
+        def read_general(reader: ByteReader) -> Any:
+            start = reader.offset
+            if reader.end - start < size:
+                raise_short(reader.data, start, reader.end, reader.base)
+            record = cls(*arguments(reader.data, start, reader.base + start))
+            reader.offset = start + size
+            return record
+
+        _install(cls, "parse", parse_general, staticmethod)
+        _install(cls, "read", read_general, staticmethod)
+
+    if not cls._encoders and len(cls._runs) == 1:
+        pack = cls._runs[0].struct.pack
+        getter = cls._getter
+        name = cls.__name__
+
+        def build(self: Any) -> bytes:
+            values = getter(self)
+            if const_getter is not None and const_getter(values) != const_values:
+                field = next(f for f in consts if values[f.index] != f.const)
+                raise BinaryBuildError(
+                    f"expected {_show(field.const)}, got {_show(values[field.index])}", record=name, field=field.name
+                )
+            try:
+                return pack(*values)
+            except (struct.error, OverflowError) as e:
+                raise BinaryBuildError(f"cannot encode: {e}", record=name) from e
+
+        _install(cls, "build", build, lambda function: function)
 
 
 __all__ = [
