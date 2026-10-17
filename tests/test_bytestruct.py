@@ -1,5 +1,6 @@
 import ipaddress
 import struct
+import sys
 import uuid
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -591,3 +592,15 @@ def test_custom_format() -> None:
     assert str(invalid.value) == "CpioHeader.mode at offset 6: invalid octal number b'abcdef'"
     with pytest.raises(BinaryBuildError, match=r"^CpioHeader\.mode: 0o10000000 does not fit"):
         CpioHeader(0o10000000).build()
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="dataclass slots need Python 3.10")
+def test_slotted_records() -> None:
+    @dataclass(slots=True)  # pyright: ignore[reportCallIssue]
+    class Slotted(BinaryStruct, byte_order="<"):
+        magic: Annotated[u16, Const(9)] = field(default=9, init=False)
+        value: u32 = 0
+
+    parsed = Slotted.parse(Slotted(5).build())
+    assert type(parsed) is Slotted and parsed == Slotted(5)
+    assert parsed.build() == b"\x09\x00\x05\x00\x00\x00"

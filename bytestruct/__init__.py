@@ -813,7 +813,9 @@ def _layout(cls: type, byte_order: str) -> tuple[list[_Field], list[_CodecField]
         if isinstance(fmt, Array):
             fmt = fmt.in_record(byte_order)
         field_struct = struct.Struct((fmt.byte_order or byte_order) + fmt.code)
-        spec = cls.__dict__.get(name)
+        # ``@dataclass(slots=True)`` recreates the class without the ``field()`` specs in its namespace (the new class
+        # is compiled again); its ``__dataclass_fields__`` still has them.
+        spec = cls.__dict__.get("__dataclass_fields__", {}).get(name) or cls.__dict__.get(name)
         init = not isinstance(spec, dataclasses.Field) or spec.init
         fields.append(_Field(len(fields), name, fmt, field_struct, offset, const, init))
         offset += field_struct.size
