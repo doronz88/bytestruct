@@ -607,13 +607,19 @@ class IPAddress(Format):
 
 class Array(Format):
     """A fixed-length array of a plain number type, parsed into a list:
-    ``Annotated[list[int], Array(u64, 6)]``. Elements are little-endian unless their alias pins a byte order."""
+    ``Annotated[list[int], Array(u64, 6)]``. Elements use the record's byte order unless their alias pins one."""
 
-    def __init__(self, element: Any, count: int) -> None:
+    def __init__(self, element: Any, count: int, byte_order: str = "<") -> None:
         fmt: Format = get_args(element)[1]
+        self.element = element
         self.count = count
-        self.struct = struct.Struct(f"{fmt.byte_order or '<'}{count}{fmt.code}")
+        self.pinned = fmt.byte_order is not None
+        self.struct = struct.Struct(f"{fmt.byte_order or byte_order}{count}{fmt.code}")
         super().__init__(f"{self.struct.size}s")
+
+    def in_record(self, byte_order: str) -> "Array":
+        """This array with unpinned elements in the enclosing record's ``byte_order``."""
+        return self if self.pinned else Array(self.element, self.count, byte_order)
 
     def decode(self, value: Any) -> list[Any]:
         """Unpack the wire bytes into a list of ``count`` numbers."""
@@ -660,6 +666,40 @@ u32le = Annotated[int, Format("I", "<")]
 """An unsigned 32-bit integer field, always little-endian."""
 u32be = Annotated[int, Format("I", ">")]
 """An unsigned 32-bit integer field, always big-endian."""
+i8 = Annotated[int, Format("b")]
+"""A signed 8-bit integer field."""
+f32 = Annotated[float, Format("f")]
+"""An IEEE 754 single-precision float field, in the record's byte order."""
+f64 = Annotated[float, Format("d")]
+"""An IEEE 754 double-precision float field, in the record's byte order."""
+u16le = Annotated[int, Format("H", "<")]
+"""An unsigned 16-bit integer field, always little-endian."""
+u16be = Annotated[int, Format("H", ">")]
+"""An unsigned 16-bit integer field, always big-endian."""
+u64le = Annotated[int, Format("Q", "<")]
+"""An unsigned 64-bit integer field, always little-endian."""
+u64be = Annotated[int, Format("Q", ">")]
+"""An unsigned 64-bit integer field, always big-endian."""
+i16le = Annotated[int, Format("h", "<")]
+"""A signed 16-bit integer field, always little-endian."""
+i16be = Annotated[int, Format("h", ">")]
+"""A signed 16-bit integer field, always big-endian."""
+i32le = Annotated[int, Format("i", "<")]
+"""A signed 32-bit integer field, always little-endian."""
+i32be = Annotated[int, Format("i", ">")]
+"""A signed 32-bit integer field, always big-endian."""
+i64le = Annotated[int, Format("q", "<")]
+"""A signed 64-bit integer field, always little-endian."""
+i64be = Annotated[int, Format("q", ">")]
+"""A signed 64-bit integer field, always big-endian."""
+f32le = Annotated[float, Format("f", "<")]
+"""An IEEE 754 single-precision float field, always little-endian."""
+f32be = Annotated[float, Format("f", ">")]
+"""An IEEE 754 single-precision float field, always big-endian."""
+f64le = Annotated[float, Format("d", "<")]
+"""An IEEE 754 double-precision float field, always little-endian."""
+f64be = Annotated[float, Format("d", ">")]
+"""An IEEE 754 double-precision float field, always big-endian."""
 uuid_t = Annotated[uuid.UUID, Uuid()]
 """A 16-byte UUID field, parsed into a :class:`uuid.UUID`."""
 ipv4 = Annotated[ipaddress.IPv4Address, IPAddress(4)]
@@ -754,6 +794,8 @@ def _layout(cls: type, byte_order: str) -> tuple[list[_Field], list[_CodecField]
             continue
         if codec_fields:
             raise TypeError(f"{cls.__name__}.{name}: fixed-size fields must precede the codec fields")
+        if isinstance(fmt, Array):
+            fmt = fmt.in_record(byte_order)
         field_struct = struct.Struct((fmt.byte_order or byte_order) + fmt.code)
         spec = cls.__dict__.get(name)
         init = not isinstance(spec, dataclasses.Field) or spec.init
@@ -1014,16 +1056,33 @@ __all__ = [
     "TruncatedDataError",
     "Tuple",
     "UnexpectedConstantError",
+    "f32",
+    "f32be",
+    "f32le",
+    "f64",
+    "f64be",
+    "f64le",
+    "i8",
     "i16",
+    "i16be",
+    "i16le",
     "i32",
+    "i32be",
+    "i32le",
     "i64",
+    "i64be",
+    "i64le",
     "ipv4",
     "ipv6",
     "u8",
     "u16",
+    "u16be",
+    "u16le",
     "u32",
     "u32be",
     "u32le",
     "u64",
+    "u64be",
+    "u64le",
     "uuid_t",
 ]

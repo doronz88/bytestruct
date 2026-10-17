@@ -26,13 +26,13 @@ from bytestruct import (
     I64_BE,
     I64_LE,
     PASS,
-    U8,
     U16_BE,
     U16_LE,
     U32_BE,
     U32_LE,
     U64_BE,
     U64_LE,
+    U8,
     Aligned,
     Array,
     BinaryBuildError,
@@ -59,17 +59,34 @@ from bytestruct import (
     TruncatedDataError,
     Tuple,
     UnexpectedConstantError,
+    f32,
+    f32be,
+    f32le,
+    f64,
+    f64be,
+    f64le,
     i16,
+    i16be,
+    i16le,
     i32,
+    i32be,
+    i32le,
     i64,
+    i64be,
+    i64le,
+    i8,
     ipv4,
     ipv6,
-    u8,
     u16,
+    u16be,
+    u16le,
     u32,
     u32be,
     u32le,
     u64,
+    u64be,
+    u64le,
+    u8,
     uuid_t,
 )
 ```
@@ -162,19 +179,53 @@ assert I64Field(-1).build().hex(" ") == "ff ff ff ff ff ff ff ff"
 assert I64Field.parse(bytes.fromhex("ff ff ff ff ff ff ff ff")) == I64Field(-1)
 ```
 
-### `u32le` and `u32be`
+### Pinned aliases: `u16le`/`u16be` ... `f64le`/`f64be`
 
-Pinned to their own byte order, whatever the record's:
+Every integer and float alias from 16 bits up has a `le` and a `be` variant pinned to that byte order, whatever the
+record's (`u16le`, `u16be`, `u32le`, `u32be`, `u64le`, `u64be`, `i16le` ... `i64be`, `f32le` ... `f64be`):
 
 ```python
 @dataclass
 class PinnedFields(BinaryStruct, byte_order=">"):
     little: u32le
     big: u32be
+    small: u16le
+    wide: u64be
+    signed: i16le
+    signed_big: i32be
+    signed_wide: i64le
+    signed_wide_big: i64be
+    half: u16be
+    long: u64le
+    sig16: i16be
+    sig32: i32le
+    flt: f32le
+    flt_big: f32be
+    dbl: f64le
+    dbl_big: f64be
 
 
-assert PinnedFields(1, 1).build().hex(" ") == "01 00 00 00 00 00 00 01"
-assert PinnedFields.parse(bytes.fromhex("01 00 00 00 00 00 00 01")) == PinnedFields(1, 1)
+pinned = PinnedFields(1, 1, 1, 1, -1, -1, -1, -1, 1, 1, -1, -1, 1.5, 1.5, 1.5, 1.5)
+data = pinned.build()
+assert data[:8].hex(" ") == "01 00 00 00 00 00 00 01"
+assert PinnedFields.parse(data) == pinned
+```
+
+### `i8`, `f32` and `f64`
+
+A signed byte, and IEEE 754 single- and double-precision floats in the record's byte order:
+
+```python
+@dataclass
+class NumericFields(BinaryStruct, byte_order=">"):
+    tiny: i8
+    single: f32
+    double: f64
+
+
+numbers = NumericFields(-2, 1.5, -0.25)
+assert numbers.build().hex(" ") == "fe 3f c0 00 00 bf d0 00 00 00 00 00 00"
+assert NumericFields.parse(bytes.fromhex("fe 3f c0 00 00 bf d0 00 00 00 00 00 00")) == numbers
 ```
 
 ### `uuid_t`
@@ -243,13 +294,13 @@ assert LenientStringField.parse(bytes.fromhex("c3 00")) == LenientStringField("ï
 ```python
 @dataclass
 class ArrayField(BinaryStruct, byte_order=">"):
-    little: Annotated[list[int], Array(u16, 2)]  # little-endian: elements ignore the record's order
-    big: Annotated[list[int], Array(u32be, 2)]  # pinned
+    big: Annotated[list[int], Array(u16, 2)]  # the record's byte order
+    little: Annotated[list[int], Array(u32le, 2)]  # pinned
 
 
 arrays = ArrayField([1, 2], [3, 4])
-assert arrays.build().hex(" ") == "01 00 02 00 00 00 00 03 00 00 00 04"
-assert ArrayField.parse(bytes.fromhex("01 00 02 00 00 00 00 03 00 00 00 04")) == arrays
+assert arrays.build().hex(" ") == "00 01 00 02 03 00 00 00 04 00 00 00"
+assert ArrayField.parse(bytes.fromhex("00 01 00 02 03 00 00 00 04 00 00 00")) == arrays
 ```
 
 ### Int-enum fields

@@ -47,8 +47,10 @@ from bytestruct import (
 | --- | --- | --- |
 | `u8` | `int` | unsigned 8-bit |
 | `u16`, `u32`, `u64` | `int` | unsigned 16/32/64-bit, in the record's byte order |
+| `i8` | `int` | signed byte |
 | `i16`, `i32`, `i64` | `int` | signed 16/32/64-bit, in the record's byte order |
-| `u32le`, `u32be` | `int` | unsigned 32-bit, always little-/big-endian |
+| `f32`, `f64` | `float` | IEEE 754 single/double precision, in the record's byte order |
+| `u16le` ... `f64be` | `int` / `float` | every 16-bit-and-up alias pinned little- (`le`) or big-endian (`be`) |
 
 ```python
 @dataclass
@@ -196,8 +198,8 @@ assert Peer.parse(data) == peer
 
 ## Fixed-length arrays: `Array(element, count)`
 
-`Annotated[list[int], Array(element, count)]` is `count` numbers of one of the integer aliases above,
-parsed into a list:
+`Annotated[list[int], Array(element, count)]` is `count` numbers of one of the number aliases above, parsed
+into a list. Elements use the record's byte order unless their alias pins one:
 
 ```python
 @dataclass
@@ -208,13 +210,9 @@ class Stats(BinaryStruct, byte_order=">"):
 
 stats = Stats([1, 2, 0x102], [5])
 data = stats.build()
-assert data == b"\x01\x00\x02\x00\x02\x01" + b"\x00\x00\x00\x05"
+assert data == b"\x00\x01\x00\x02\x01\x02" + b"\x00\x00\x00\x05"
 assert Stats.parse(data) == stats
 ```
-
-!!! warning "Array elements do not follow the record's byte order"
-    Array elements are little-endian unless their alias pins a byte order, even in a big-endian record:
-    `counts` above is little-endian. Use a pinned alias (`u32be`) for big-endian elements.
 
 Building from a list of the wrong length is an error:
 

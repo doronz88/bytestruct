@@ -238,7 +238,7 @@ def test_uuid_ip_and_array_fields() -> None:
         uuid.UUID(int=1).bytes
         + ipaddress.IPv4Address("10.0.0.1").packed
         + ipaddress.IPv6Address("fe80::1").packed
-        + b"\x01\x00\x02\x00\x02\x01"  # little-endian unless pinned
+        + b"\x00\x01\x00\x02\x01\x02"  # the record's byte order unless pinned
         + b"\x00\x00\x00\x05"
     )
     assert len(raw) == Extras.SIZE

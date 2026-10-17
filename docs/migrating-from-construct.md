@@ -47,8 +47,6 @@ The main differences in shape:
 
 ### Behavior differences to watch for
 
-- **Byte order of `Array` elements.** `Array(u16, n)` elements are little-endian unless the alias pins a
-  byte order, whatever the record's `byte_order`.
 - **`PaddedString`** decodes up to the first NUL (or the whole field when it has none) and ignores what
   follows, like construct's. Building a string longer than the field, or one containing a NUL, raises
   `BinaryBuildError`; construct raises too for an overlong string.
