@@ -8,8 +8,9 @@ copyright: Licensed under MIT
 
 theme:
   name: material
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
   icon:
-    logo: material/code-braces
     repo: fontawesome/brands/github
   features:
     - navigation.instant
