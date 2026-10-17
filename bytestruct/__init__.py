@@ -491,10 +491,11 @@ class Bytes(Format):
 
 
 class PaddedString(Format):
-    """A fixed-size field holding a NUL-terminated UTF-8 string followed by arbitrary bytes.
+    """A fixed-size field holding a NUL-padded UTF-8 string of at most ``size`` bytes.
 
-    ``errors`` is the UTF-8 decoding error handler (e.g. ``"replace"`` for names cut mid-character). Building
-    NUL-pads the encoded string to the field size; it must leave room for the terminator.
+    A string that fills the field has no terminator; a shorter one ends at its first NUL, and the bytes after it
+    are ignored. ``errors`` is the UTF-8 decoding error handler (e.g. ``"replace"`` for names cut mid-character).
+    Building NUL-pads the encoded string to the field size.
     """
 
     def __init__(self, size: int, errors: str = "strict") -> None:
@@ -503,22 +504,20 @@ class PaddedString(Format):
         self.errors = errors
 
     def decode(self, value: Any) -> str:
-        """Decode the bytes before the first NUL, raising :class:`BinaryParseError` when there is none."""
+        """Decode the bytes before the first NUL (the whole field when there is none)."""
         end = value.find(b"\0")
-        if end == -1:
-            raise BinaryParseError(f"C string not terminated within its {self.size}-byte field")
         try:
-            return value[:end].decode("utf-8", self.errors)
+            return (value if end == -1 else value[:end]).decode("utf-8", self.errors)
         except UnicodeDecodeError as e:
-            raise BinaryParseError(f"invalid UTF-8 in C string field: {e}") from e
+            raise BinaryParseError(f"invalid UTF-8 in string field: {e}") from e
 
     def encode(self, value: Any) -> bytes:
-        """Convert the field value to the wire bytes, raising :class:`BinaryBuildError` when it does not fit."""
+        """Encode the string, raising :class:`BinaryBuildError` when it does not fit or contains a NUL byte."""
         encoded = value.encode("utf-8")
-        if b"\0" in encoded:
-            raise BinaryBuildError("C string contains a NUL byte")
-        if len(encoded) >= self.size:
-            raise BinaryBuildError(f"C string of {len(encoded)} bytes does not fit its {self.size}-byte field")
+        if b"\0" in encoded:  # parse would stop there
+            raise BinaryBuildError("string contains a NUL byte")
+        if len(encoded) > self.size:
+            raise BinaryBuildError(f"string of {len(encoded)} bytes does not fit its {self.size}-byte field")
         return encoded
 
 

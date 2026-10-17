@@ -204,16 +204,15 @@ def test_padded_string() -> None:
 
     assert Named.parse(b"ab\0x" + b"\xc3\0\0\0") == Named("ab", "�")
     assert Named.parse(b"abc\0" + b"\0\0\0\0").name == "abc"
-    with pytest.raises(BinaryParseError, match="not terminated") as unterminated:
-        Named.parse(b"abcd" + b"\0\0\0\0")
-    assert (unterminated.value.field, unterminated.value.offset) == ("name", 0)
+    assert Named.parse(b"abcd" + b"ab\0\0") == Named("abcd", "ab")  # a full field has no terminator
     with pytest.raises(BinaryParseError, match="invalid UTF-8") as invalid:
         Named.parse(b"\xc3\0\0\0" + b"\0\0\0\0")
     assert invalid.value.field == "name"
 
     assert Named("ab", "é").build() == b"ab\0\0" + "é".encode() + b"\0\0"
+    assert Named("abcd", "éé").build() == b"abcd" + "éé".encode()  # exactly the field size, no terminator
     with pytest.raises(BinaryBuildError, match="does not fit") as too_long:
-        Named("abcd", "").build()
+        Named("abcde", "").build()
     assert too_long.value.field == "name"
     with pytest.raises(BinaryBuildError, match="NUL byte"):
         Named("a\0b", "").build()
