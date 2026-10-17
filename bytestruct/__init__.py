@@ -561,8 +561,12 @@ class PaddedString(Format):
             raise BinaryParseError(f"invalid UTF-8 in string field: {e}") from e
 
     def encode(self, value: Any) -> bytes:
-        """Encode the string, raising :class:`BinaryBuildError` when it does not fit or contains a NUL byte."""
-        encoded = value.encode("utf-8")
+        """Encode the string, raising :class:`BinaryBuildError` when it cannot be encoded, does not fit or contains a
+        NUL byte."""
+        try:
+            encoded = value.encode("utf-8")
+        except UnicodeEncodeError as e:
+            raise BinaryBuildError(f"cannot encode {value!r}: {e}") from e
         if b"\0" in encoded:  # parse would stop there
             raise BinaryBuildError("string contains a NUL byte")
         if len(encoded) > self.size:

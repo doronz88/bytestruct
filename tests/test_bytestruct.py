@@ -218,6 +218,9 @@ def test_padded_string() -> None:
     with pytest.raises(BinaryBuildError, match="does not fit") as too_long:
         Named("abcde", "").build()
     assert too_long.value.field == "name"
+    with pytest.raises(BinaryBuildError, match="cannot encode") as unencodable:
+        Named("\udcff", "").build()
+    assert unencodable.value.field == "name"
     with pytest.raises(BinaryBuildError, match="NUL byte"):
         Named("a\0b", "").build()
 
