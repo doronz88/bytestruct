@@ -10,3 +10,4 @@ __pycache__/
 bytestruct/_version.py
 .python-version
 uv.lock
+site/
