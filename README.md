@@ -86,6 +86,27 @@ Header.magic at offset 0: expected 0x1f3d5b79, got 0x0
 DICTIONARY -> [2] -> STRING at offset 104: expected 200 bytes, found 16
 ```
 
+## Performance
+
+Parsing and building run mostly inside `struct`'s C code, and conversions cost a Python call only on the
+fields that need one. In the [benchmark](https://doronz88.github.io/bytestruct/how-it-works/#benchmark)
+(Apple M5 Pro, CPython 3.12, construct 2.10.70):
+
+| Case | bytestruct | construct | construct, compiled |
+| --- | ---: | ---: | ---: |
+| header parse | 0.30 µs | 2.14 µs (7.2x) | 0.85 µs (2.9x) |
+| header build | 0.16 µs | 2.04 µs (12.8x) | 1.15 µs (7.2x) |
+| 100 strings parse | 26.5 µs | 133.7 µs (5.0x) | 84.3 µs (3.2x) |
+| 100 strings build | 11.5 µs | 47.2 µs (4.1x) | 41.5 µs (3.6x) |
+
+That is 4-13x faster than construct, and 3-7x faster than construct's `compile()`. A hand-written
+`struct.unpack_from` into a plain dataclass is still about twice as fast for one small header; that gap pays
+for typed fields, constant checks and located errors.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the checks CI runs and how releases are cut.
+
 ## License
 
 MIT

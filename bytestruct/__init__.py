@@ -69,6 +69,15 @@ from bytestruct.exceptions import (
     UnexpectedConstantError,
 )
 
+# The module's sections, in order:
+#   ByteReader      a cursor over a buffer, for formats read by hand
+#   Codec protocol  ``Codec``/``CodecBase``, the ``Scalar`` codecs (``U32_LE``, ...) and the combinators
+#                   (``CString``, ``Prefixed``, ``Aligned``, ``PrefixedArray``, ``Tuple``, ``Switch``, ...)
+#   Field formats   ``Format`` and its subclasses (``Bytes``, ``PaddedString``, ``Uuid``, ``Array``, ...), ``Const``
+#                   and the field type aliases (``u8``, ``u32``, ``u32be``, ...)
+#   Record compiler ``_layout``/``_runs`` and ``BinaryStruct``, whose ``__init_subclass__`` compiles each record
+#                   class (walked through in docs/how-it-works.md)
+
 BytesLike = Union[bytes, bytearray, memoryview]
 """Any buffer the parsers accept: ``bytes``, ``bytearray`` or ``memoryview``."""
 
@@ -728,6 +737,8 @@ _NO_CONST = object()  # sentinel: None (or 0) can be a legitimate constant
 
 @dataclasses.dataclass(frozen=True)
 class _Field:
+    """A fixed-size field, as laid out by :func:`_layout`."""
+
     index: int  # position among the fixed-size fields
     name: str
     fmt: Format
@@ -756,6 +767,7 @@ class _Run:
 
 
 def _is_codec(item: Any) -> bool:
+    """Whether annotation metadata is a codec (see :class:`Codec`)."""
     return hasattr(item, "read") and hasattr(item, "build")
 
 
@@ -779,6 +791,10 @@ def _wire_format(hint: Any) -> tuple[Optional[Format], Any, Optional[Codec[Any]]
 
 
 def _layout(cls: type, byte_order: str) -> tuple[list[_Field], list[_CodecField]]:
+    """The record's fixed-size fields (with their offsets) and codec fields, in declaration order.
+
+    Fields without a wire type are skipped; ``Array`` fields take the record's byte order unless pinned.
+    """
     # 3.10+ ``__annotations__`` is per class (lazily computed on 3.14); 3.9's falls back to a base class's.
     names = cls.__annotations__ if sys.version_info >= (3, 10) else cls.__dict__.get("__annotations__", {})
     hints = get_type_hints(cls, include_extras=True)  # keeps the Annotated metadata
@@ -815,6 +831,7 @@ def _runs(fields: list[_Field]) -> list[_Run]:
 
 
 def _overrides(fmt: Format, method: str) -> bool:
+    """Whether the format's class overrides ``Format.decode``/``encode``; only overriding fields are converted."""
     return getattr(type(fmt), method) is not getattr(Format, method)
 
 
@@ -855,6 +872,12 @@ class BinaryStruct:
     _plain_build: ClassVar[bool]  # build is a single pack of the field values
 
     def __init_subclass__(cls, byte_order: str = "<", **kwargs: Any) -> None:
+        """Compile the record: runs once per class, when the ``class`` statement executes (before ``@dataclass``).
+
+        It lays out the fields, groups them into one ``struct.Struct`` per byte-order run, precomputes the
+        constant, decoder and encoder lists, and picks the ``_plain``/``_plain_build`` fast paths. See
+        docs/how-it-works.md for the walkthrough.
+        """
         super().__init_subclass__(**kwargs)
         if cls.__bases__ != (BinaryStruct,):
             raise TypeError(f"{cls.__name__}: records cannot be subclassed or mixed with other bases")
@@ -979,6 +1002,7 @@ class BinaryStruct:
         return b"".join(parts)
 
     def _build_fixed(self) -> bytes:
+        """Encode the fixed-size fields: check the constants, run the encoders, then pack each run."""
         cls = type(self)
         if cls._plain_build:
             try:
