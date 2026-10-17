@@ -1,4 +1,4 @@
-"""Small stdlib helpers for parsing binary wire structures.
+"""Declarative binary records and composable codecs, on the standard library alone.
 
 Fixed-size records are declared as dataclasses deriving from :class:`BinaryStruct`, with each field's wire
 type given by its annotation::
@@ -56,9 +56,12 @@ from typing import (
     get_type_hints,
 )
 
-from typing_extensions import Self
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:  # only installed below 3.11, where pyright still finds its bundled stub
+    from typing_extensions import Self  # pyright: ignore[reportMissingModuleSource]
 
-from pymobiledevice3.exceptions import (
+from bytestruct.exceptions import (
     BinaryBuildError,
     BinaryDataError,
     BinaryParseError,
@@ -759,8 +762,8 @@ class BinaryStruct:
 
     @classmethod
     def _raise_short(cls, data: BytesLike, start: int, end: int, base: int) -> NoReturn:
-        """A wrong constant that is already readable wins (``b"HTTP/1.1..."`` is not a short XPC frame, it is not
-        an XPC frame at all); otherwise the error names the first field that does not fit."""
+        """A wrong constant that is already readable wins (``b"HTTP/1.1..."`` is not a short frame, it is not
+        a frame of this record at all); otherwise the error names the first field that does not fit."""
         available = end - start
         for field in cls._consts:
             if field.offset + field.struct.size <= available:
@@ -840,6 +843,9 @@ __all__ = [
     "U64_LE",
     "Aligned",
     "Array",
+    "BinaryBuildError",
+    "BinaryDataError",
+    "BinaryParseError",
     "BinaryStruct",
     "ByteReader",
     "Bytes",
@@ -856,7 +862,9 @@ __all__ = [
     "PrefixedArray",
     "Scalar",
     "Switch",
+    "TruncatedDataError",
     "Tuple",
+    "UnexpectedConstantError",
     "i16",
     "i32",
     "i64",

@@ -7,7 +7,7 @@ from typing import Annotated
 
 import pytest
 
-from pymobiledevice3.binary import (
+from bytestruct import (
     CSTRING,
     GREEDY_BYTES,
     PASS,
@@ -16,6 +16,9 @@ from pymobiledevice3.binary import (
     U32_LE,
     Aligned,
     Array,
+    BinaryBuildError,
+    BinaryDataError,
+    BinaryParseError,
     BinaryStruct,
     ByteReader,
     Bytes,
@@ -26,7 +29,9 @@ from pymobiledevice3.binary import (
     Prefixed,
     PrefixedArray,
     Switch,
+    TruncatedDataError,
     Tuple,
+    UnexpectedConstantError,
     i32,
     ipv4,
     ipv6,
@@ -37,7 +42,6 @@ from pymobiledevice3.binary import (
     u32le,
     uuid_t,
 )
-from pymobiledevice3.exceptions import BinaryBuildError, BinaryParseError, TruncatedDataError, UnexpectedConstantError
 
 _U32 = struct.Struct("<I")
 
@@ -485,3 +489,13 @@ def test_codec_fields_follow_the_fixed_size_fields() -> None:
         class Interleaved(BinaryStruct):
             name: Annotated[str, CSTRING]
             size: u32
+
+
+def test_errors_are_value_errors() -> None:
+    assert issubclass(TruncatedDataError, BinaryParseError)
+    assert issubclass(UnexpectedConstantError, BinaryParseError)
+    assert issubclass(BinaryParseError, BinaryDataError)
+    assert issubclass(BinaryBuildError, BinaryDataError)
+    assert BinaryDataError.__mro__[1:] == (ValueError, *ValueError.__mro__[1:])
+    with pytest.raises(ValueError, match="at offset 0"):
+        U32_LE.parse(b"")
