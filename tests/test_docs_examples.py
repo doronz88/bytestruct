@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+import bytestruct
+
 ROOT = Path(__file__).resolve().parent.parent
 PAGES = [*sorted((ROOT / "docs").glob("*.md")), ROOT / "README.md"]
 BLOCK = re.compile(r"^(?P<marker><!-- docs-test: skip -->\n+)?```python\n(?P<code>.*?)^```$", re.MULTILINE | re.DOTALL)
@@ -68,3 +70,10 @@ def test_examples_run(page: Path) -> None:
             exec(compile(tree, str(page), "exec"), module.__dict__)
     finally:
         del sys.modules[module.__name__]
+
+
+def test_reference_uses_every_public_name() -> None:
+    """The type reference shows every public name in use, not just imported."""
+    code = "\n".join(code for _, code in _examples(ROOT / "docs" / "reference.md"))
+    used = {node.id for node in ast.walk(ast.parse(code)) if isinstance(node, ast.Name)}
+    assert sorted(set(bytestruct.__all__) - used) == []

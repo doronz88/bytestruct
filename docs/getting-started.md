@@ -80,3 +80,6 @@ assert issubclass(BinaryDataError, ValueError)
 - [Codecs](codecs.md) covers the combinators for variable-length data.
 - [ByteReader](byte-reader.md) covers parsing formats by hand.
 - [Errors](errors.md) covers the exception tree and error locations.
+- [Extending bytestruct](extending.md) shows how to write your own field types and codecs.
+- The [Cookbook](cookbook.md) has complete formats, end to end.
+- The [Type reference](reference.md) has a round-trip example for every public type.

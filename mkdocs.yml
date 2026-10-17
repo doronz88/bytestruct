@@ -73,9 +73,12 @@ plugins:
           - codecs.md
           - byte-reader.md
           - errors.md
+          - extending.md
+          - cookbook.md
           - how-it-works.md
           - migrating-from-construct.md
-        API reference:
+        Reference:
+          - reference.md
           - api.md
 
 markdown_extensions:
@@ -105,6 +108,10 @@ nav:
       - Codecs: codecs.md
       - ByteReader: byte-reader.md
       - Errors: errors.md
+      - Extending bytestruct: extending.md
+      - Cookbook: cookbook.md
       - How it works: how-it-works.md
       - Migrating from construct: migrating-from-construct.md
-  - API reference: api.md
+  - Reference:
+      - Type reference: reference.md
+      - API reference: api.md

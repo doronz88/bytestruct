@@ -332,48 +332,9 @@ assert sample.build() == b"\xff" + b"\x00\x00\x00\x00\x00\x00\xe0\x3f" + b"\x1f\
 assert Sample.parse(sample.build()) == sample
 ```
 
-To convert values, subclass `Format` and override `decode` (the unpacked value to the field value) and/or
-`encode` (the reverse); only overridden methods are called. Raise `BinaryParseError` from `decode` and
-`BinaryBuildError` from `encode`: the record adds its name, the field and the offset. Here is the
-ASCII-octal number of a cpio header, `Annotated[int, Octal(6)]`:
-
-```python
-class Octal(Format):
-    """An ASCII-octal number in a fixed-size field, zero-padded on the left."""
-
-    def __init__(self, size: int) -> None:
-        super().__init__(f"{size}s")  # `size` raw bytes on the wire
-        self.size = size
-
-    def decode(self, value: bytes) -> int:
-        try:
-            return int(value, 8)
-        except ValueError as e:
-            raise BinaryParseError(f"invalid octal number {value!r}") from e
-
-    def encode(self, value: int) -> bytes:
-        digits = b"%o" % value
-        if len(digits) > self.size:
-            raise BinaryBuildError(f"{value:#o} does not fit {self.size} octal digits")
-        return digits.rjust(self.size, b"0")
-
-
-@dataclass
-class CpioHeader(BinaryStruct):
-    magic: Annotated[bytes, Bytes(6), Const(b"070707")] = field(default=b"070707", init=False)
-    mode: Annotated[int, Octal(6)]
-    nlink: Annotated[int, Octal(6)]
-
-
-header = CpioHeader(0o100644, 1)
-assert header.build() == b"070707" + b"100644" + b"000001"
-assert CpioHeader.parse(header.build()) == header
-
-try:
-    CpioHeader.parse(b"070707" + b"abcdef" + b"000001")
-except BinaryParseError as e:
-    assert str(e) == "CpioHeader.mode at offset 6: invalid octal number b'abcdef'"
-```
+To convert values, subclass `Format` and override `decode` and/or `encode`: see
+[Extending bytestruct](extending.md#custom-fixed-size-field-types) for worked examples (an ASCII-octal
+number, a fixed-point number, a bitfield).
 
 ## Padding and reserved bytes
 

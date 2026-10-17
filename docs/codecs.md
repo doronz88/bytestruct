@@ -304,88 +304,28 @@ the record variable-length. See [Records](records.md#variable-length-fields).
 
 ## Writing your own codec
 
-Subclass `CodecBase[T]` (for the `parse` shortcut) or write any class with `read` and `build`. Read with
-the [`ByteReader`](byte-reader.md) methods, which raise `TruncatedDataError` for you; raise
-`BinaryParseError` / `BinaryBuildError` for anything else, with `offset=reader.absolute` so the error is
-located.
-
-An unsigned LEB128 varint (7 bits per byte, low groups first, the high bit set on all but the last byte),
-which no fixed-size scalar can express:
+Subclass `CodecBase[T]` (for the `parse` shortcut) or write any class with `read` and `build`. A
+minimal one, a byte split into its two nibbles:
 
 ```python
 from bytestruct import CodecBase
 
 
-class VarInt(CodecBase[int]):
-    """An unsigned LEB128 integer."""
+class Nibbles(CodecBase[tuple[int, int]]):
+    def read(self, reader: ByteReader) -> tuple[int, int]:
+        byte = U8.read(reader)  # raises TruncatedDataError, located, at the end of the data
+        return byte >> 4, byte & 0xF
 
-    def read(self, reader: ByteReader) -> int:
-        start = reader.absolute
-        result = shift = 0
-        while True:
-            byte = U8.read(reader)  # raises TruncatedDataError at the end of the data
-            result |= (byte & 0x7F) << shift
-            if not byte & 0x80:
-                return result
-            shift += 7
-            if shift > 63:
-                raise BinaryParseError("varint longer than 64 bits", offset=start)
-
-    def build(self, value: int) -> bytes:
-        if value < 0:
-            raise BinaryBuildError(f"cannot encode {value}: negative")
-        out = bytearray()
-        while True:
-            byte, value = value & 0x7F, value >> 7
-            out.append(byte | (0x80 if value else 0))
-            if not value:
-                return bytes(out)
+    def build(self, value: tuple[int, int]) -> bytes:
+        return U8.build(value[0] << 4 | value[1])
 
 
-VARINT = VarInt()
-assert VARINT.build(300) == b"\xac\x02"
-assert VARINT.parse(b"\xac\x02") == 300
-assert VARINT.parse(VARINT.build(2**63)) == 2**63
-
-STRINGS = PrefixedArray(U8, Tuple(VARINT, CSTRING))  # custom codecs compose like the built-in ones
-assert STRINGS.parse(STRINGS.build([(1, "a"), (300, "b")])) == [(1, "a"), (300, "b")]
-
-try:
-    VARINT.parse(b"\x80")
-except BinaryParseError as e:
-    assert str(e) == "at offset 1: expected 1 bytes, found 0"
+NIBBLES = Nibbles()
+assert NIBBLES.build((4, 5)) == b"\x45"
+assert NIBBLES.parse(b"\x45") == (4, 5)
+assert PrefixedArray(U8, NIBBLES).parse(b"\x02\x12\x34") == [(1, 2), (3, 4)]
 ```
 
-A codec that contains other values should record which one failed, by calling `within(step)` on a
-`BinaryDataError` as it propagates (see [Errors](errors.md#for-codec-authors)). An adapter that converts
-another codec's value:
-
-```python
-from datetime import datetime, timezone
-
-from bytestruct import BinaryDataError
-
-
-class Timestamp(CodecBase[datetime]):
-    """Seconds since the epoch, as a little-endian u64."""
-
-    def read(self, reader: ByteReader) -> datetime:
-        try:
-            return datetime.fromtimestamp(U64_LE.read(reader), timezone.utc)
-        except BinaryDataError as e:
-            e.within("Timestamp")
-            raise
-
-    def build(self, value: datetime) -> bytes:
-        return U64_LE.build(int(value.timestamp()))
-
-
-WHEN = Timestamp()
-moment = datetime(2026, 1, 1, tzinfo=timezone.utc)
-assert WHEN.parse(WHEN.build(moment)) == moment
-
-try:
-    WHEN.parse(b"\x00")
-except BinaryParseError as e:
-    assert str(e) == "Timestamp at offset 0: expected 8 bytes, found 1"
-```
+[Extending bytestruct](extending.md#custom-codecs) has full worked examples: a varint, a byte-length
+prefixed list of records, a TLV codec, codecs as record fields, located errors, a recursive format and how
+to test them.
