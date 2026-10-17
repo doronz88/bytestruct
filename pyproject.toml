@@ -1,0 +1,140 @@
+[project]
+name = "bytestruct"
+description = "Declarative binary records and composable codecs, using only the standard library"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = ["binary", "struct", "parsing", "serialization", "dataclasses", "construct"]
+authors = [{ name = "doronz88", email = "doron88@gmail.com" }]
+maintainers = [{ name = "doronz88", email = "doron88@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Libraries",
+    "Typing :: Typed",
+]
+dynamic = ["version"]
+# typing.Self is stdlib from 3.11.
+dependencies = ["typing_extensions>=4.1.0; python_version < '3.11'"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+"Homepage" = "https://github.com/doronz88/bytestruct"
+"Bug Reports" = "https://github.com/doronz88/bytestruct/issues"
+
+[tool.setuptools]
+package-data = { "bytestruct" = ["py.typed"] }
+
+[tool.setuptools.packages.find]
+include = ["bytestruct*"]
+
+[tool.setuptools_scm]
+version_file = "bytestruct/_version.py"
+
+[build-system]
+requires = ["setuptools>=77.0.0", "setuptools_scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error"]
+
+[tool.pyright]
+include = ["bytestruct", "tests"]
+pythonVersion = "3.9"
+typeCheckingMode = "standard"
+# Bug-revealing strict-mode rules adopted on top of standard.
+reportUnnecessaryComparison = "error"
+reportUnnecessaryIsInstance = "error"
+reportUnnecessaryCast = "error"
+reportUntypedNamedTuple = "error"
+reportDeprecated = "error"
+reportMissingTypeArgument = "error"
+reportMissingParameterType = "error"
+reportUnknownVariableType = "error"
+reportUnknownMemberType = "error"
+reportUnknownArgumentType = "error"
+reportUnknownParameterType = "error"
+reportUnknownLambdaType = "error"
+venvPath = "."
+venv = ".venv"
+
+# The reportMissingParameterType and reportUnknown* rules are enforced across the package, but not
+# on the test suite: test fixtures and helpers are deliberately loosely-typed.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["."]
+reportMissingParameterType = "none"
+reportUnknownVariableType = "none"
+reportUnknownMemberType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownParameterType = "none"
+reportUnknownLambdaType = "none"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+fix = true
+
+[tool.ruff.lint]
+select = [
+    # flake8-2020
+    "YTT",
+    # flake8-bugbear
+    "B",
+    # flake8-builtins
+    "A",
+    # flake8-comprehensions
+    "C4",
+    # flake8-debugger
+    "T10",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+    # pycodestyle
+    "E",
+    "W",
+    # pyflakes
+    "F",
+    # pygrep-hooks
+    "PGH",
+    # pyupgrade
+    "UP",
+    # ruff
+    "RUF",
+    # tryceratops
+    "TRY",
+]
+ignore = [
+    # Shadowing a built-in
+    "A001",
+    # LineTooLong
+    "E501",
+    # Custom error classes
+    "TRY003",
+    # Abstract `raise` to an inner function
+    "TRY301",
+    # Do not perform function call in dataclass defaults (e.g. `memoryview(b"")`)
+    "RUF009",
+    # Use `X | Y` instead of `Union` (keep Union so annotations stay evaluable on the 3.9 floor,
+    # e.g. under typing.get_type_hints(), not just as strings via `from __future__ import annotations`)
+    "UP007",
+    # Use `X | None` instead of `Optional` (same reason as UP007)
+    "UP045",
+]
+
+[tool.ruff.format]
+preview = true

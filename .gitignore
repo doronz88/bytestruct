@@ -1,0 +1,12 @@
+.DS_Store
+.idea/
+.venv*/
+venv/
+build/
+dist/
+*.pyc
+__pycache__/
+*.egg-info/
+bytestruct/_version.py
+.python-version
+uv.lock
