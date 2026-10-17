@@ -723,9 +723,15 @@ class _EnumFormat(Format):
     def __init__(self, base: Format, enum_type: type[enum.Enum]) -> None:
         super().__init__(base.code, base.byte_order)
         self.enum_type = enum_type
+        # The enum's own value -> member map: a lookup costs a fraction of ``enum_type(value)``. Values that are
+        # not in it (unknown ones, an ``OpenIntEnum``'s first sighting of one, combined flags) take the call.
+        self._members = enum_type._value2member_map_
 
     def decode(self, value: Any) -> Any:
         """Convert the unpacked integer to the enum, raising :class:`BinaryParseError` for an unknown value."""
+        member = self._members.get(value)
+        if member is not None:
+            return member
         try:
             return self.enum_type(value)
         except ValueError as e:

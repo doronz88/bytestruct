@@ -3,7 +3,7 @@ import struct
 import sys
 import uuid
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import IntEnum, IntFlag
 from typing import Annotated
 
 import pytest
@@ -604,3 +604,25 @@ def test_slotted_records() -> None:
     parsed = Slotted.parse(Slotted(5).build())
     assert type(parsed) is Slotted and parsed == Slotted(5)
     assert parsed.build() == b"\x09\x00\x05\x00\x00\x00"
+
+
+def test_enum_fields_use_known_members_and_still_reject_unknown_values() -> None:
+    class Level(OpenIntEnum):
+        INFO = 1
+
+    class Perm(IntFlag):
+        R = 1
+        W = 2
+
+    @dataclass
+    class Entry(BinaryStruct, byte_order="<"):
+        op: Annotated[Op, u8]
+        level: Annotated[Level, u8]
+        perm: Annotated[Perm, u8]
+
+    entry = Entry.parse(b"\x01\x01\x03")
+    assert entry.op is Op.READ and entry.level is Level.INFO and entry.perm == Perm.R | Perm.W
+    assert Entry.parse(b"\x01\x63\x00").level == 99
+    with pytest.raises(BinaryParseError) as e:
+        Entry.parse(b"\x09\x01\x00")
+    assert (e.value.record, e.value.field, e.value.offset) == ("Entry", "op", 0)
