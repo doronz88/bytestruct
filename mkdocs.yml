@@ -4,7 +4,7 @@ site_url: https://doronz88.github.io/bytestruct/
 repo_url: https://github.com/doronz88/bytestruct
 repo_name: doronz88/bytestruct
 edit_uri: edit/master/docs/
-copyright: Licensed under GPL-3.0-or-later
+copyright: Licensed under MIT
 
 theme:
   name: material

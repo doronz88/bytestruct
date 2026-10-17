@@ -88,4 +88,4 @@ DICTIONARY -> [2] -> STRING at offset 104: expected 200 bytes, found 16
 
 ## License
 
-GPL-3.0-or-later
+MIT
