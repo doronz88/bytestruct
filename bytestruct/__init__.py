@@ -70,6 +70,7 @@ from bytestruct.exceptions import (
 )
 
 BytesLike = Union[bytes, bytearray, memoryview]
+"""Any buffer the parsers accept: ``bytes``, ``bytearray`` or ``memoryview``."""
 
 
 class ByteReader:
@@ -92,6 +93,7 @@ class ByteReader:
 
     @property
     def remaining(self) -> int:
+        """The number of bytes left before ``end``."""
         return self.end - self.offset
 
     @property
@@ -105,6 +107,7 @@ class ByteReader:
         return TruncatedDataError(f"expected {size} bytes, found {self.remaining}", offset=self.absolute)
 
     def read(self, size: int) -> bytes:
+        """Consume and return the next ``size`` bytes."""
         offset = self.offset
         if not 0 <= size <= self.end - offset:
             raise self._invalid_size(size)
@@ -112,6 +115,7 @@ class ByteReader:
         return self.data[offset : offset + size]
 
     def skip(self, size: int) -> None:
+        """Consume the next ``size`` bytes without returning them."""
         if not 0 <= size <= self.end - self.offset:
             raise self._invalid_size(size)
         self.offset += size
@@ -125,9 +129,11 @@ class ByteReader:
         return reader
 
     def read_all(self) -> bytes:
+        """Consume and return every remaining byte, up to ``end``."""
         return self.read(self.end - self.offset)
 
     def unpack(self, fmt: struct.Struct) -> tuple[Any, ...]:
+        """Consume ``fmt.size`` bytes and return all the values ``fmt`` unpacks from them."""
         offset = self.offset
         if fmt.size > self.end - offset:
             raise self._invalid_size(fmt.size)
@@ -135,6 +141,7 @@ class ByteReader:
         return fmt.unpack_from(self.data, offset)
 
     def unpack_one(self, fmt: struct.Struct) -> Any:
+        """Consume ``fmt.size`` bytes and return the single value ``fmt`` unpacks from them."""
         offset = self.offset
         if fmt.size > self.end - offset:
             raise self._invalid_size(fmt.size)
@@ -175,9 +182,11 @@ class CodecBase(Generic[T]):
     """Base of the combinators: a codec with a ``parse`` shortcut."""
 
     def read(self, reader: ByteReader) -> T:
+        """Parse one value at the reader's offset and advance past it."""
         raise NotImplementedError
 
     def build(self, value: T) -> bytes:
+        """Encode ``value`` (raising :class:`BinaryBuildError` when it cannot be encoded)."""
         raise NotImplementedError
 
     def parse(self, data: BytesLike) -> T:
@@ -189,12 +198,15 @@ class Scalar(struct.Struct):
     """A ``struct.Struct`` holding a single value, usable as a codec and with ``ByteReader.unpack_one``."""
 
     def read(self, reader: ByteReader) -> Any:
+        """Parse the value at the reader's offset and advance past it."""
         return reader.unpack_one(self)
 
     def parse(self, data: BytesLike) -> Any:
+        """Parse the value from the start of ``data``; trailing bytes are ignored."""
         return self.read(ByteReader(data))
 
     def build(self, value: Any) -> bytes:
+        """Pack ``value``; out-of-range or wrongly-typed values raise :class:`BinaryBuildError`."""
         try:
             return self.pack(value)
         except (struct.error, OverflowError) as e:
@@ -202,21 +214,30 @@ class Scalar(struct.Struct):
 
 
 U8 = Scalar("B")
+"""An unsigned 8-bit integer."""
 U16_BE = Scalar(">H")
+"""A big-endian unsigned 16-bit integer."""
 U32_LE = Scalar("<I")
+"""A little-endian unsigned 32-bit integer."""
 I32_LE = Scalar("<i")
+"""A little-endian signed 32-bit integer."""
 U64_LE = Scalar("<Q")
+"""A little-endian unsigned 64-bit integer."""
 I64_LE = Scalar("<q")
+"""A little-endian signed 64-bit integer."""
 F64_LE = Scalar("<d")
+"""A little-endian IEEE 754 double."""
 
 
 class Pass(CodecBase[None]):
     """No bytes; parses to ``None``."""
 
     def read(self, reader: ByteReader) -> None:
+        """Parse one value at the reader's offset and advance past it."""
         return None
 
     def build(self, value: None) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
         return b""
 
 
@@ -224,9 +245,11 @@ class GreedyBytes(CodecBase[bytes]):
     """Every remaining byte (of the enclosing :class:`Prefixed`, or of the buffer)."""
 
     def read(self, reader: ByteReader) -> bytes:
+        """Parse one value at the reader's offset and advance past it."""
         return reader.read_all()
 
     def build(self, value: BytesLike) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
         return bytes(value)
 
 
@@ -240,6 +263,7 @@ class CString(CodecBase[str]):
         self.errors = errors
 
     def read(self, reader: ByteReader) -> str:
+        """Parse one value at the reader's offset and advance past it."""
         start = reader.absolute
         raw = reader.read_cstring()
         try:
@@ -248,6 +272,7 @@ class CString(CodecBase[str]):
             raise BinaryParseError(f"invalid UTF-8 in C string: {e}", offset=start) from e
 
     def build(self, value: str) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
         if "\0" in value:
             raise BinaryBuildError(f"embedded NUL in {value!r}")
         try:
@@ -257,8 +282,11 @@ class CString(CodecBase[str]):
 
 
 PASS = Pass()
+"""The :class:`Pass` codec."""
 GREEDY_BYTES = GreedyBytes()
+"""The :class:`GreedyBytes` codec."""
 CSTRING = CString()
+"""A strict :class:`CString` codec."""
 
 
 class Prefixed(CodecBase[T]):
@@ -269,6 +297,7 @@ class Prefixed(CodecBase[T]):
         self.inner = inner
 
     def read(self, reader: ByteReader) -> T:
+        """Parse one value at the reader's offset and advance past it."""
         size = reader.unpack_one(self.length)
         end = reader.end
         stop = reader.offset + size
@@ -282,6 +311,7 @@ class Prefixed(CodecBase[T]):
             reader.offset = stop
 
     def build(self, value: T) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
         body = self.inner.build(value)
         try:
             return self.length.pack(len(body)) + body
@@ -298,12 +328,14 @@ class Aligned(CodecBase[T]):
         self._padding = [bytes(size) for size in range(modulus)]
 
     def read(self, reader: ByteReader) -> T:
+        """Parse one value at the reader's offset and advance past it."""
         start = reader.offset
         value = self.inner.read(reader)
         reader.skip(-(reader.offset - start) % self.modulus)
         return value
 
     def build(self, value: T) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
         data = self.inner.build(value)
         return data + self._padding[-len(data) % self.modulus]
 
@@ -316,6 +348,7 @@ class PrefixedArray(CodecBase[list[T]]):
         self.element = element
 
     def read(self, reader: ByteReader) -> list[T]:
+        """Parse one value at the reader's offset and advance past it."""
         count = reader.unpack_one(self.count)
         read = self.element.read
         result: list[T] = []
@@ -328,6 +361,7 @@ class PrefixedArray(CodecBase[list[T]]):
         return result
 
     def build(self, value: list[T]) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
         build = self.element.build
         parts = [self.count.build(len(value))]
         for index, element in enumerate(value):
@@ -346,9 +380,11 @@ class Tuple(CodecBase[tuple[Any, ...]]):
         self.codecs = codecs
 
     def read(self, reader: ByteReader) -> tuple[Any, ...]:
+        """Parse one value at the reader's offset and advance past it."""
         return tuple([codec.read(reader) for codec in self.codecs])
 
     def build(self, value: tuple[Any, ...]) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
         codecs = self.codecs
         if len(value) != len(codecs):
             raise BinaryBuildError(f"expected {len(codecs)} values, got {len(value)}")
@@ -370,6 +406,7 @@ class Switch(CodecBase[tuple[Any, Any]]):
         self._names = {key: getattr(key, "name", None) or _show(key) for key in self.cases}
 
     def read(self, reader: ByteReader) -> tuple[Any, Any]:
+        """Parse one value at the reader's offset and advance past it."""
         start = reader.absolute
         tag = reader.unpack_one(self.tag)
         case = self.cases.get(tag, self.default)
@@ -382,6 +419,7 @@ class Switch(CodecBase[tuple[Any, Any]]):
             raise
 
     def build(self, value: tuple[Any, Any]) -> bytes:
+        """Encode ``value``, raising :class:`BinaryBuildError` when it cannot be encoded."""
         tag, item = value
         case = self.cases.get(tag, self.default)
         if case is None:
@@ -421,9 +459,11 @@ class Format:
         self.byte_order = byte_order
 
     def decode(self, value: Any) -> Any:
+        """Convert the unpacked wire value to the field value."""
         return value
 
     def encode(self, value: Any) -> Any:
+        """Convert the field value to the value to pack."""
         return value
 
 
@@ -435,15 +475,18 @@ class Bytes(Format):
         self.size = size
 
     def encode(self, value: Any) -> Any:
+        """Convert the field value to the wire bytes, raising :class:`BinaryBuildError` when it does not fit."""
         if len(value) != self.size:
             raise BinaryBuildError(f"expected {self.size} bytes, got {len(value)}")
         return value
 
     # As a codec, outside of fixed-size records.
     def read(self, reader: ByteReader) -> bytes:
+        """Read the next ``size`` bytes (as a codec, outside of fixed-size records)."""
         return reader.read(self.size)
 
     def build(self, value: BytesLike) -> bytes:
+        """Encode ``value``, which must be exactly ``size`` bytes long (as a codec)."""
         return bytes(self.encode(value))
 
 
@@ -460,6 +503,7 @@ class PaddedString(Format):
         self.errors = errors
 
     def decode(self, value: Any) -> str:
+        """Decode the bytes before the first NUL, raising :class:`BinaryParseError` when there is none."""
         end = value.find(b"\0")
         if end == -1:
             raise BinaryParseError(f"C string not terminated within its {self.size}-byte field")
@@ -469,6 +513,7 @@ class PaddedString(Format):
             raise BinaryParseError(f"invalid UTF-8 in C string field: {e}") from e
 
     def encode(self, value: Any) -> bytes:
+        """Convert the field value to the wire bytes, raising :class:`BinaryBuildError` when it does not fit."""
         encoded = value.encode("utf-8")
         if b"\0" in encoded:
             raise BinaryBuildError("C string contains a NUL byte")
@@ -484,9 +529,11 @@ class Uuid(Format):
         super().__init__("16s")
 
     def decode(self, value: Any) -> uuid.UUID:
+        """Parse the 16 wire bytes into a :class:`uuid.UUID`."""
         return uuid.UUID(bytes=value)
 
     def encode(self, value: Any) -> bytes:
+        """Return the UUID's 16 bytes."""
         return value.bytes
 
 
@@ -498,9 +545,11 @@ class IPAddress(Format):
         super().__init__("4s" if version == 4 else "16s")
 
     def decode(self, value: Any) -> Union[ipaddress.IPv4Address, ipaddress.IPv6Address]:
+        """Parse the packed wire bytes into an :mod:`ipaddress` address."""
         return self.address_type(value)
 
     def encode(self, value: Any) -> bytes:
+        """Return the address's packed bytes."""
         return value.packed
 
 
@@ -515,9 +564,11 @@ class Array(Format):
         super().__init__(f"{self.struct.size}s")
 
     def decode(self, value: Any) -> list[Any]:
+        """Unpack the wire bytes into a list of ``count`` numbers."""
         return list(self.struct.unpack(value))
 
     def encode(self, value: Any) -> bytes:
+        """Convert the field value to the wire bytes, raising :class:`BinaryBuildError` when it does not fit."""
         if len(value) != self.count:
             raise BinaryBuildError(f"expected {self.count} elements, got {len(value)}")
         try:
@@ -540,17 +591,29 @@ class Const:
 # Field types: ``Annotated[<what type checkers see>, <wire format>]``. The byte order comes from the record unless
 # the alias pins one.
 u8 = Annotated[int, Format("B")]
+"""An unsigned 8-bit integer field."""
 u16 = Annotated[int, Format("H")]
+"""An unsigned 16-bit integer field, in the record's byte order."""
 u32 = Annotated[int, Format("I")]
+"""An unsigned 32-bit integer field, in the record's byte order."""
 u64 = Annotated[int, Format("Q")]
+"""An unsigned 64-bit integer field, in the record's byte order."""
 i16 = Annotated[int, Format("h")]
+"""A signed 16-bit integer field, in the record's byte order."""
 i32 = Annotated[int, Format("i")]
+"""A signed 32-bit integer field, in the record's byte order."""
 i64 = Annotated[int, Format("q")]
+"""A signed 64-bit integer field, in the record's byte order."""
 u32le = Annotated[int, Format("I", "<")]
+"""An unsigned 32-bit integer field, always little-endian."""
 u32be = Annotated[int, Format("I", ">")]
+"""An unsigned 32-bit integer field, always big-endian."""
 uuid_t = Annotated[uuid.UUID, Uuid()]
+"""A 16-byte UUID field, parsed into a :class:`uuid.UUID`."""
 ipv4 = Annotated[ipaddress.IPv4Address, IPAddress(4)]
+"""A 4-byte IPv4 address field, parsed into an :class:`ipaddress.IPv4Address`."""
 ipv6 = Annotated[ipaddress.IPv6Address, IPAddress(6)]
+"""A 16-byte IPv6 address field, parsed into an :class:`ipaddress.IPv6Address`."""
 
 
 class _EnumFormat(Format):
@@ -561,6 +624,7 @@ class _EnumFormat(Format):
         self.enum_type = enum_type
 
     def decode(self, value: Any) -> Any:
+        """Convert the unpacked integer to the enum, raising :class:`BinaryParseError` for an unknown value."""
         try:
             return self.enum_type(value)
         except ValueError as e:
