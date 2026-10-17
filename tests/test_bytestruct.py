@@ -626,3 +626,35 @@ def test_enum_fields_use_known_members_and_still_reject_unknown_values() -> None
     with pytest.raises(BinaryParseError) as e:
         Entry.parse(b"\x09\x01\x00")
     assert (e.value.record, e.value.field, e.value.offset) == ("Entry", "op", 0)
+
+
+def test_specialized_read_reports_absolute_offsets_and_respects_the_window() -> None:
+    @dataclass
+    class Tagged(BinaryStruct, byte_order="<"):
+        magic: Annotated[u16, Const(0xBEEF)] = field(default=0xBEEF, init=False)
+        value: u32 = 0
+
+    data = b"\xaa" * 4 + Tagged(7).build() + b"\xbb"
+    reader = ByteReader(data, 4, base=100)
+    assert Tagged.read(reader) == Tagged(7)
+    assert reader.offset == 4 + Tagged.SIZE
+    with pytest.raises(UnexpectedConstantError) as e:
+        Tagged.read(ByteReader(b"\x00" * 10, 2, base=50))
+    assert (e.value.record, e.value.field, e.value.offset) == ("Tagged", "magic", 52)
+    window = ByteReader(data, 4).sub(Tagged.SIZE - 1)
+    with pytest.raises(TruncatedDataError) as e:
+        Tagged.read(window)
+    assert e.value.field == "value"
+    assert window.offset == 4  # a failed read does not advance
+
+
+def test_a_method_the_record_defines_is_not_replaced() -> None:
+    @dataclass
+    class Custom(BinaryStruct, byte_order="<"):
+        value: u16
+
+        def build(self) -> bytes:
+            return b"custom"
+
+    assert Custom(1).build() == b"custom"
+    assert Custom.parse(b"\x01\x00") == Custom(1)

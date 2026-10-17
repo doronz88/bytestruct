@@ -2,7 +2,7 @@
 
 bytestruct is a single module of about a thousand lines. This page walks through what happens when a
 record class is defined, parsed and built, and why it is shaped that way. The names below (`_layout`,
-`_runs`, `_plain`, ...) are private implementation details: read them in
+`_runs`, `_specialize`, ...) are private implementation details: read them in
 [`bytestruct/__init__.py`](https://github.com/doronz88/bytestruct/blob/master/bytestruct/__init__.py), but
 do not depend on them.
 
@@ -27,26 +27,28 @@ decorates the class). It:
    *decoders*); the non-constant fields whose format overrides `encode` (the *encoders*); an
    `operator.attrgetter` over the fixed-size fields; the indexes of the `__init__` parameters, when not all
    fields are; and `SIZE`.
-5. **Picks the fast paths**:
-    - `_plain` parse: one run, no constants, no decoders, every field an `__init__` parameter, no codec
-      fields.
-    - `_plain_build`: one run, no constants, no encoders.
+5. **Specializes the record** (`_specialize`): a record without codec fields gets its own `parse`, `read`
+   and `build`, closures with the answers to "constants? decoders? `init=False` fields? how many runs?"
+   baked in, so a call does no dispatching. A `parse`, `read` or `build` the record defines itself is
+   kept.
 
 Records cannot be subclassed (the class's only base must be `BinaryStruct`), so this layout is final:
 there are no base-class fields to merge, and no subclass that could change it.
 
 ## Parsing
 
-A `_plain` record parses in one line: check the length, then
+The commonest record, one byte-order run and no decoders, parses with
 
 ```text
-cls(*run.struct.unpack_from(data, start))
+values = run.unpack_from(data)          # struct.error -> _raise_short
+if constants(values) != expected: ...   # one itemgetter call and one comparison, only with constants
+return cls(*values)                     # or cls(*init_values(values)) when some fields are init=False
 ```
 
 That is one C-level `unpack_from` straight into the dataclass `__init__`: no intermediate dictionary, no
-per-field Python code.
-
-Otherwise, `_unpack` builds the `__init__` argument list:
+per-field Python code. A record with decoders or several runs gets a closure that performs the general
+steps below without the per-call dispatch; a record with codec fields uses the generic `_unpack`. Either
+way, the `__init__` argument list is built like this:
 
 1. check `SIZE` against the available bytes once (not per field);
 2. `unpack_from` each run at its offset, extending one list of values;
@@ -62,10 +64,13 @@ then wins: `b"HTTP/1.1 ..."` is not a short frame, it is not a frame at all.
 
 ## Building
 
-A `_plain_build` record builds with one `pack` of the attrgetter's tuple:
+A record of one run without encoders builds with one `pack` of the attrgetter's tuple, after one
+comparison of its constants (if it has any):
 
 ```text
-run.struct.pack(*getter(self))
+values = getter(self)
+if constants(values) != expected: ...
+run.pack(*values)
 ```
 
 Otherwise, `_build_fixed` compares all the constants at once (one attrgetter call, one tuple comparison;
@@ -75,7 +80,7 @@ just checked to equal the constant.
 
 ## Codec fields
 
-A record with codec fields always takes the general path. `read` unpacks the fixed-size fields as above,
+A record with codec fields always takes the generic methods. `read` unpacks the fixed-size fields as above,
 moves the reader past `SIZE` bytes, then calls each codec field's `codec.read(reader)` in order and passes
 everything to `__init__`. `build` joins the fixed-size bytes with each `codec.build(value)`. An error
 inside a codec field gets a `Record.field` step in its path.
@@ -102,6 +107,10 @@ the cheapest:
 - Most of the work happens inside `struct`'s C code: one `unpack_from` per byte-order run, not one call
   per field.
 - Conversions are opt-in. A field costs a Python call only if its format overrides `decode`/`encode`.
+  Enum fields look the value up in the enum's own value-to-member map, a fraction of the cost of calling
+  the enum; only values missing from it (unknown ones, combined flags) take the call.
+- Each record gets its own `parse`/`read`/`build` closures, so a call does no dispatching on the record's
+  shape.
 - There is no dynamic context. construct evaluates `this` expressions against a context and builds a
   `Container` for every struct it parses; bytestruct has neither, and its records are ordinary
   dataclasses.
@@ -110,32 +119,34 @@ the cheapest:
 ## Benchmark
 
 A fixed-size header (a `u32` magic, two `u16`, a `u32` and a `u64`, little-endian) and a list of 100
-length-prefixed NUL-terminated strings, parsed and built with bytestruct and with construct (both
-interpreted and `compile()`d). For the header parse, a hand-written `struct.unpack_from` into a plain
-dataclass is the floor.
+length-prefixed NUL-terminated strings, parsed and built with bytestruct, with construct (both
+interpreted and `compile()`d) and, for the header, with a `ctypes.LittleEndianStructure` (magic checked
+by hand). A hand-written `struct.unpack_from` into a plain dataclass is the floor for a dataclass result.
 
 Measured on an Apple M5 Pro (macOS 27.0.1), CPython 3.12.13, construct 2.10.70, best of 7 repeats; the
 ratios are relative to bytestruct:
 
-| Case | bytestruct | construct | construct, compiled | struct + dataclass |
-| --- | ---: | ---: | ---: | ---: |
-| header parse | 0.30 µs | 2.14 µs (7.2x) | 0.85 µs (2.9x) | 0.15 µs (0.5x) |
-| header build | 0.16 µs | 2.04 µs (12.8x) | 1.15 µs (7.2x) | |
-| 100 strings parse | 26.5 µs | 133.7 µs (5.0x) | 84.3 µs (3.2x) | |
-| 100 strings build | 11.5 µs | 47.2 µs (4.1x) | 41.5 µs (3.6x) | |
+| Case | bytestruct | construct | construct, compiled | ctypes | struct + dataclass |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| header parse | 0.14 µs | 2.20 µs (15.7x) | 0.87 µs (6.2x) | 0.09 µs (0.6x) | 0.15 µs (1.1x) |
+| header build | 0.10 µs | 2.05 µs (20.5x) | 1.17 µs (11.7x) | 0.03 µs (0.3x) | |
+| 100 strings parse | 26.8 µs | 131.8 µs (4.9x) | 83.7 µs (3.1x) | | |
+| 100 strings build | 11.3 µs | 46.6 µs (4.1x) | 41.6 µs (3.7x) | | |
 
-In this benchmark bytestruct is 4-13x faster than interpreted construct and 3-7x faster than compiled
-construct. Hand-written `struct` code is still twice as fast for one small header: the header's `Const`
-takes it off the `_plain` path, and a record parse makes a few Python-level calls that a bare
-`unpack_from` does not. That gap is the price of the declarative layer, paid for typed fields, constant
-checks and located errors.
+In this benchmark bytestruct is 4-20x faster than interpreted construct and 3-12x faster than compiled
+construct, and a record parse costs the same as the hand-written `struct` code. ctypes is faster still
+for the header, because `from_buffer_copy` is one copy into C memory, not a Python object: each
+attribute read then converts from C (about 2.5x the cost of reading a dataclass field), values wider
+than a field are silently truncated, and there are no variable-length fields, constants or located
+errors.
 
 The script (needs `pip install bytestruct construct`):
 
 <!-- docs-test: skip -->
 ```python
-"""bytestruct vs construct: parse and build a fixed-size header and a list of strings."""
+"""bytestruct vs construct and ctypes: parse and build a fixed-size header and a list of strings."""
 
+import ctypes
 import platform
 import struct
 import timeit
@@ -167,6 +178,26 @@ CHeader = c.Struct(
 NAMES = PrefixedArray(U32_LE, Prefixed(U32_LE, CSTRING))
 CNames = c.PrefixedArray(c.Int32ul, c.Prefixed(c.Int32ul, c.CString("utf8")))
 
+
+
+class CtypesHeader(ctypes.LittleEndianStructure):
+    _pack_ = 1
+    _fields_ = [
+        ("magic", ctypes.c_uint32),
+        ("major", ctypes.c_uint16),
+        ("minor", ctypes.c_uint16),
+        ("flags", ctypes.c_uint32),
+        ("size", ctypes.c_uint64),
+    ]
+
+
+def ctypes_parse(data):
+    header = CtypesHeader.from_buffer_copy(data)
+    if header.magic != 0xFEEDFACE:
+        raise ValueError(header.magic)
+    return header
+
+
 # The floor: a hand-written struct.unpack_from into a plain dataclass.
 RAW = struct.Struct("<IHHIQ")
 
@@ -190,6 +221,8 @@ header = Header(1, 2, 3, 4)
 data = header.build()
 assert CHeader.build({"major": 1, "minor": 2, "flags": 3, "size": 4}) == data
 cheader = CHeader.parse(data)
+ctheader = ctypes_parse(data)
+assert bytes(ctheader) == data
 names = [f"name-{i}" for i in range(100)]
 names_data = NAMES.build(names)
 assert CNames.build(names) == names_data
@@ -200,11 +233,13 @@ cases = {
         "bytestruct": lambda: Header.parse(data),
         "construct": lambda: CHeader.parse(data),
         "construct (compiled)": (lambda p: lambda: p(data))(CHeader.compile().parse),
+        "ctypes": lambda: ctypes_parse(data),
     },
     "header build": {
         "bytestruct": lambda: header.build(),
         "construct": lambda: CHeader.build(cheader),
         "construct (compiled)": (lambda b: lambda: b(cheader))(CHeader.compile().build),
+        "ctypes": lambda: bytes(ctheader),
     },
     "100 strings parse": {
         "bytestruct": lambda: NAMES.parse(names_data),

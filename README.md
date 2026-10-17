@@ -88,20 +88,21 @@ DICTIONARY -> [2] -> STRING at offset 104: expected 200 bytes, found 16
 
 ## Performance
 
-Parsing and building run mostly inside `struct`'s C code, and conversions cost a Python call only on the
-fields that need one. In the [benchmark](https://doronz88.github.io/bytestruct/how-it-works/#benchmark)
-(Apple M5 Pro, CPython 3.12, construct 2.10.70):
+Each record class gets its own `parse`/`read`/`build`, compiled when the class is defined, and the work
+happens mostly inside `struct`'s C code. In the
+[benchmark](https://doronz88.github.io/bytestruct/how-it-works/#benchmark) (Apple M5 Pro, CPython 3.12,
+construct 2.10.70):
 
-| Case | bytestruct | construct | construct, compiled |
-| --- | ---: | ---: | ---: |
-| header parse | 0.30 µs | 2.14 µs (7.2x) | 0.85 µs (2.9x) |
-| header build | 0.16 µs | 2.04 µs (12.8x) | 1.15 µs (7.2x) |
-| 100 strings parse | 26.5 µs | 133.7 µs (5.0x) | 84.3 µs (3.2x) |
-| 100 strings build | 11.5 µs | 47.2 µs (4.1x) | 41.5 µs (3.6x) |
+| Case | bytestruct | construct | construct, compiled | ctypes |
+| --- | ---: | ---: | ---: | ---: |
+| header parse | 0.14 µs | 2.20 µs (15.7x) | 0.87 µs (6.2x) | 0.09 µs (0.6x) |
+| header build | 0.10 µs | 2.05 µs (20.5x) | 1.17 µs (11.7x) | 0.03 µs (0.3x) |
+| 100 strings parse | 26.8 µs | 131.8 µs (4.9x) | 83.7 µs (3.1x) | |
+| 100 strings build | 11.3 µs | 46.6 µs (4.1x) | 41.6 µs (3.7x) | |
 
-That is 4-13x faster than construct, and 3-7x faster than construct's `compile()`. A hand-written
-`struct.unpack_from` into a plain dataclass is still about twice as fast for one small header; that gap pays
-for typed fields, constant checks and located errors.
+A record parse costs the same as a hand-written `struct.unpack_from` into a plain dataclass. ctypes is
+faster for a fixed C layout, but its fields convert from C on every read, overflow silently, and cannot be
+variable-length.
 
 ## Contributing
 

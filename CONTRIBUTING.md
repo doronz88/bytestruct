@@ -12,7 +12,7 @@
 
 Start with [How it works](https://doronz88.github.io/bytestruct/how-it-works/) (`docs/how-it-works.md`). It
 walks through what `BinaryStruct.__init_subclass__` compiles when a record class is defined, and how parse
-and build use the result. The private names it mentions (`_layout`, `_runs`, `_plain`, ...) match the
+and build use the result. The private names it mentions (`_layout`, `_runs`, `_specialize`, ...) match the
 source.
 
 ## Setting up
@@ -58,9 +58,9 @@ Public names need a docstring, since it is what the API reference shows. A new g
 
 - Keep a behavior change and its tests in the same commit, and update the docs in the same pull request.
 - Commit subjects are scoped, for example `bytestruct: Raise BinaryBuildError for ...` or `docs: ...`.
-- The hot paths (`BinaryStruct._parse`, `_unpack`, `_build_fixed`) are benchmarked in
-  [How it works](https://doronz88.github.io/bytestruct/how-it-works/#benchmark). If you change them, rerun
-  the benchmark and include the numbers in the pull request.
+- The hot paths (the closures `_specialize` installs, `BinaryStruct._unpack` and `_build_fixed`) are
+  benchmarked in [How it works](https://doronz88.github.io/bytestruct/how-it-works/#benchmark). If you
+  change them, rerun the benchmark and include the numbers in the pull request.
 
 ## Releasing
 
