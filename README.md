@@ -86,6 +86,10 @@ Header.magic at offset 0: expected 0x1f3d5b79, got 0x0
 DICTIONARY -> [2] -> STRING at offset 104: expected 200 bytes, found 16
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the checks CI runs and how releases are cut.
+
 ## License
 
 MIT
