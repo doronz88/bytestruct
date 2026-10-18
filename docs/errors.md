@@ -116,7 +116,8 @@ assert safe_parse(b"junk") is None
 ```
 
 `TruncatedDataError` means "not enough bytes yet", which a stream reader can use to wait for more data:
-everything else is malformed and will not get better.
+everything else is malformed and will not get better. ([`parse_stream`](streams.md) does this for you, reading
+exactly the missing bytes.)
 
 ```python
 def frames(chunks):

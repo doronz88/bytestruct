@@ -12,7 +12,7 @@ The main differences in shape:
   `Container`, and building takes an instance instead of a dict.
 - Byte order is set once per record (`byte_order="<"`), not per field.
 - Fixed-size fields come first; variable-length (codec) fields follow them.
-- Everything parses from an in-memory buffer: there is no stream or file parsing.
+- Parsing works on in-memory buffers; [`parse_stream`](streams.md) parses one value from a file or a stream.
 
 ## Mapping table
 
@@ -203,6 +203,6 @@ custom codec; some are out of scope by design.
 | `Checksum`, `RawCopy` | compute over the bytes returned by `build` or the slice that was parsed |
 | `Lazy`, `LazyBound` (recursive structures) | a custom codec whose `read` calls itself |
 | `Struct.compile()` | not needed: records are compiled when the class is defined |
-| `parse_stream`, `parse_file` | read the bytes first; bytestruct parses in-memory buffers only |
+| `parse_stream`, `parse_file` | [`parse_stream(codec, stream.read)`](streams.md), `parse_stream_async` for `asyncio` streams |
 | `Container` / `ListContainer` | dataclass instances and lists |
 | Nested anonymous `Struct`s | separate record classes, nested with `Annotated[Inner, Inner]` (a codec field, so after the fixed-size fields) |

@@ -77,6 +77,8 @@ from bytestruct import (
     i8,
     ipv4,
     ipv6,
+    parse_stream,
+    parse_stream_async,
     u16,
     u16be,
     u16le,
@@ -647,6 +649,30 @@ def first_byte(data: BytesLike) -> int:
 
 assert first_byte(b"\x01") == first_byte(bytearray(b"\x01")) == first_byte(memoryview(b"\x01")) == 1
 ```
+
+### `parse_stream`, `parse_stream_async`
+
+Parse one value from a stream, consuming exactly its bytes:
+
+```python
+import asyncio
+import io
+
+stream = io.BytesIO(bytes.fromhex("00 02 68 69 ff"))
+assert parse_stream(Prefixed(U16_BE, GREEDY_STRING), stream.read) == "hi"
+assert stream.read() == b"\xff"
+
+
+async def first_value() -> str:
+    reader = asyncio.StreamReader()
+    reader.feed_data(bytes.fromhex("00 02 68 69 ff"))
+    return await parse_stream_async(Prefixed(U16_BE, GREEDY_STRING), reader.readexactly)
+
+
+assert asyncio.run(first_value()) == "hi"
+```
+
+See [Streams](streams.md) for the rules.
 
 ### Exceptions
 
