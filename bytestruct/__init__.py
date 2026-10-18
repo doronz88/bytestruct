@@ -236,7 +236,7 @@ class Codec(Protocol[T]):
 
 
 class CodecBase(Generic[T]):
-    """Base of the combinators: a codec with a ``parse`` shortcut."""
+    """Base of the combinators: a codec with the ``parse``, ``parse_stream`` and ``parse_stream_async`` shortcuts."""
 
     def read(self, reader: ByteReader) -> T:
         """Parse one value at the reader's offset and advance past it."""
@@ -250,6 +250,25 @@ class CodecBase(Generic[T]):
         """Parse the value from the start of ``data``; trailing bytes are ignored."""
         return self.read(ByteReader(data))
 
+    def parse_stream(self, read: Callable[[int], BytesLike]) -> T:
+        """Parse one value from a stream, consuming exactly its bytes.
+
+        ``read(size)`` returns up to ``size`` bytes, and ``b""`` at the end of the stream (e.g. a binary file's
+        ``read``). The value is parsed from the bytes read so far; while it extends past them, exactly the missing
+        bytes are read and it is parsed again, so the stream is left right after the value. A value that needs more
+        than the stream holds raises :class:`TruncatedDataError`. A greedy value (``GREEDY_BYTES``, ...) has no end
+        in a stream, so it can only be parsed inside a :class:`Prefixed`. A C string is read on a byte at a time.
+        """
+        return _parse_stream(self, read)
+
+    async def parse_stream_async(self, read: Callable[[int], Awaitable[BytesLike]]) -> T:
+        """:meth:`parse_stream` for an asynchronous ``read``, such as ``asyncio.StreamReader.readexactly``.
+
+        ``await read(size)`` returns up to ``size`` bytes (``readexactly`` returns all of them, or raises
+        ``IncompleteReadError``, which is left to propagate), and ``b""`` at the end of the stream.
+        """
+        return await _parse_stream_async(self, read)
+
 
 class Scalar(struct.Struct):
     """A ``struct.Struct`` holding a single value, usable as a codec and with ``ByteReader.unpack_one``."""
@@ -261,6 +280,14 @@ class Scalar(struct.Struct):
     def parse(self, data: BytesLike) -> Any:
         """Parse the value from the start of ``data``; trailing bytes are ignored."""
         return self.read(ByteReader(data))
+
+    def parse_stream(self, read: Callable[[int], BytesLike]) -> Any:
+        """Parse the value from a stream and leave the stream right after it, like :meth:`CodecBase.parse_stream`."""
+        return _parse_stream(self, read)
+
+    async def parse_stream_async(self, read: Callable[[int], Awaitable[BytesLike]]) -> Any:
+        """:meth:`parse_stream` for an asynchronous ``read``, like :meth:`CodecBase.parse_stream_async`."""
+        return await _parse_stream_async(self, read)
 
     def build(self, value: Any) -> bytes:
         """Pack ``value``; out-of-range or wrongly-typed values raise :class:`BinaryBuildError`."""
@@ -971,6 +998,16 @@ class BinaryStruct:
         return cls._parse(data, 0, len(data), 0)
 
     @classmethod
+    def parse_stream(cls, read: Callable[[int], BytesLike]) -> Self:
+        """Parse the record from a stream and leave the stream right after it, like :meth:`CodecBase.parse_stream`."""
+        return _parse_stream(cls, read)
+
+    @classmethod
+    async def parse_stream_async(cls, read: Callable[[int], Awaitable[BytesLike]]) -> Self:
+        """:meth:`parse_stream` for an asynchronous ``read``, like :meth:`CodecBase.parse_stream_async`."""
+        return await _parse_stream_async(cls, read)
+
+    @classmethod
     def read(cls, reader: ByteReader) -> Self:
         """Parse the record at the reader's offset and advance past it."""
         start = reader.offset
@@ -1234,15 +1271,8 @@ def _stream_ended(size: int, offset: int) -> TruncatedDataError:
     return TruncatedDataError(f"stream ended: expected {size} more bytes", offset=offset)
 
 
-def parse_stream(codec: Codec[T], read: Callable[[int], BytesLike]) -> T:
-    """Parse one value of ``codec`` from a stream, consuming exactly its bytes.
-
-    ``read(size)`` returns up to ``size`` bytes, and ``b""`` at the end of the stream (e.g. a binary file's
-    ``read``). The value is parsed from the bytes read so far; while it extends past them, exactly the missing
-    bytes are read and it is parsed again, so the stream is left right after the value. A value that needs more
-    than the stream holds raises :class:`TruncatedDataError`. A greedy value (``GREEDY_BYTES``, ...) has no end
-    in a stream, so it can only be parsed inside a :class:`Prefixed`. A C string is read on a byte at a time.
-    """
+def _parse_stream(codec: Codec[T], read: Callable[[int], BytesLike]) -> T:
+    """The implementation of :meth:`CodecBase.parse_stream` (any codec, records included)."""
     data = b""
     size = _min_size(codec)
     while True:
@@ -1260,12 +1290,8 @@ def parse_stream(codec: Codec[T], read: Callable[[int], BytesLike]) -> T:
             size = e.needed
 
 
-async def parse_stream_async(codec: Codec[T], read: Callable[[int], Awaitable[BytesLike]]) -> T:
-    """:func:`parse_stream` for an asynchronous ``read``, such as ``asyncio.StreamReader.readexactly``.
-
-    ``await read(size)`` returns up to ``size`` bytes (``readexactly`` returns all of them, or raises
-    ``IncompleteReadError``, which is left to propagate), and ``b""`` at the end of the stream.
-    """
+async def _parse_stream_async(codec: Codec[T], read: Callable[[int], Awaitable[BytesLike]]) -> T:
+    """The implementation of :meth:`CodecBase.parse_stream_async`."""
     data = b""
     size = _min_size(codec)
     while True:
@@ -1349,8 +1375,6 @@ __all__ = [
     "i64le",
     "ipv4",
     "ipv6",
-    "parse_stream",
-    "parse_stream_async",
     "u8",
     "u16",
     "u16be",

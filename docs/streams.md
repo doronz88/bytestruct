@@ -1,8 +1,9 @@
 # Streams
 
 `parse` and `read` work on bytes that are already in memory. To parse a value straight from a file, a socket or
-an `asyncio` stream, without knowing its size up front, use `parse_stream` or `parse_stream_async`. Both parse
-one value and leave the stream right after it, so the next read starts at the next value.
+an `asyncio` stream, without knowing its size up front, use `parse_stream` or `parse_stream_async`, which every
+codec with `parse` has (records, scalars and the combinators). Both parse one value and leave the stream right
+after it, so the next read starts at the next value.
 
 ```python
 import asyncio
@@ -18,8 +19,6 @@ from bytestruct import (
     BinaryStruct,
     Prefixed,
     TruncatedDataError,
-    parse_stream,
-    parse_stream_async,
     u16,
 )
 
@@ -31,8 +30,8 @@ class Message(BinaryStruct, byte_order="<"):
 
 
 stream = io.BytesIO(Message(1, b"first").build() + Message(2, b"second").build())
-assert parse_stream(Message, stream.read) == Message(1, b"first")
-assert parse_stream(Message, stream.read) == Message(2, b"second")
+assert Message.parse_stream(stream.read) == Message(1, b"first")
+assert Message.parse_stream(stream.read) == Message(2, b"second")
 assert stream.read() == b""
 ```
 
@@ -42,7 +41,7 @@ stream, such as a binary file's `read`. `parse_stream_async` takes one to await,
 
 ```python
 async def receive(reader: asyncio.StreamReader) -> list[Message]:
-    return [await parse_stream_async(Message, reader.readexactly) for _ in range(2)]
+    return [await Message.parse_stream_async(reader.readexactly) for _ in range(2)]
 
 
 async def main() -> list[Message]:
@@ -73,7 +72,7 @@ def recording_read(size: int) -> bytes:
     return source.read(size)
 
 
-parse_stream(Message, recording_read)
+Message.parse_stream(recording_read)
 assert sizes == [6, 5]
 assert source.read() == b"next"
 ```
@@ -89,7 +88,7 @@ value again, from its start, which is cheap for the headers and messages of a pr
 
 ```python
 try:
-    parse_stream(GREEDY_BYTES, io.BytesIO(b"data").read)
+    GREEDY_BYTES.parse_stream(io.BytesIO(b"data").read)
 except BinaryParseError as e:
     assert str(e) == "a greedy value cannot be parsed from a stream; prefix it with its length"
 ```
@@ -98,7 +97,7 @@ except BinaryParseError as e:
 
 ```python
 stream = io.BytesIO(b"name\0rest")
-assert parse_stream(CSTRING, stream.read) == "name"
+assert CSTRING.parse_stream(stream.read) == "name"
 assert stream.read() == b"rest"
 ```
 
@@ -107,7 +106,7 @@ assert stream.read() == b"rest"
 
 ```python
 try:
-    parse_stream(Message, io.BytesIO(Message(1, b"first").build()[:-2]).read)
+    Message.parse_stream(io.BytesIO(Message(1, b"first").build()[:-2]).read)
 except TruncatedDataError as e:
     assert str(e) == "at offset 9: stream ended: expected 2 more bytes"
 ```

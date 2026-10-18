@@ -203,6 +203,6 @@ custom codec; some are out of scope by design.
 | `Checksum`, `RawCopy` | compute over the bytes returned by `build` or the slice that was parsed |
 | `Lazy`, `LazyBound` (recursive structures) | a custom codec whose `read` calls itself |
 | `Struct.compile()` | not needed: records are compiled when the class is defined |
-| `parse_stream`, `parse_file` | [`parse_stream(codec, stream.read)`](streams.md), `parse_stream_async` for `asyncio` streams |
+| `parse_stream`, `parse_file` | [`codec.parse_stream(stream.read)`](streams.md), `codec.parse_stream_async(reader.readexactly)` for `asyncio` streams |
 | `Container` / `ListContainer` | dataclass instances and lists |
 | Nested anonymous `Struct`s | separate record classes, nested with `Annotated[Inner, Inner]` (a codec field, so after the fixed-size fields) |
