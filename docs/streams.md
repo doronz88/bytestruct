@@ -78,7 +78,7 @@ assert source.read() == b"next"
 ```
 
 Only bytes the value certainly covers are read, so nothing after it is consumed. Each extra read parses the
-value again, from its start, which is cheap for the headers and messages of a protocol.
+value again, from its start (see [Performance](#performance)).
 
 ## What can be parsed
 
@@ -113,6 +113,28 @@ except TruncatedDataError as e:
 
 - **Malformed values** fail without reading further than the minimum size: a wrong constant as soon as it is
   parsed, and a value cut short inside a `Prefixed` (which more data cannot fix) right away.
+
+## Performance
+
+`parse_stream` is slower than reading the bytes by hand and calling `parse`: it trades speed for not having to
+know where a value ends. A value with a variable part (a `Prefixed` body, ...) is parsed at least twice, since
+its length is only known after the first attempt, and each failed attempt raises and catches an error. A C
+string outside a `Prefixed` costs a failed attempt per character.
+
+Measured on an Apple M5 Pro with Python 3.14, against the hand-written equivalent (`Header.parse` of an
+exact-size read, then a read of `header.length` bytes):
+
+| Value | Hand-written | `parse_stream` |
+| --- | --- | --- |
+| 16-byte fixed record, from `BytesIO` | 0.16 µs | 0.39 µs |
+| 6-byte header and 16-byte body, from `BytesIO` | 0.20 µs | 1.97 µs |
+| 6-byte header and 64 KiB body, from `BytesIO` | 1.17 µs | 5.73 µs |
+| 64-byte body, asyncio TCP loopback | 0.70 µs | 2.60 µs |
+| 64 KiB body, asyncio TCP loopback | 12.40 µs | 19.10 µs |
+| 64-character C string, from `BytesIO` | 1.62 µs | 50.53 µs |
+
+It makes the same number of `read` calls as the hand-written code, so the difference matters less as I/O
+dominates. On a hot path (many small messages per second), read a fixed-size header and its body by hand.
 
 ## Custom codecs
 

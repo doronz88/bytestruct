@@ -258,6 +258,9 @@ class CodecBase(Generic[T]):
         bytes are read and it is parsed again, so the stream is left right after the value. A value that needs more
         than the stream holds raises :class:`TruncatedDataError`. A greedy value (``GREEDY_BYTES``, ...) has no end
         in a stream, so it can only be parsed inside a :class:`Prefixed`. A C string is read on a byte at a time.
+
+        It is slower than reading the bytes by hand and calling :meth:`parse`: a value with a variable part is
+        parsed at least twice (see the Streams guide for measurements).
         """
         return _parse_stream(self, read)
 
