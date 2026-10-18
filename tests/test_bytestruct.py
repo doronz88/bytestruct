@@ -1,3 +1,5 @@
+import asyncio
+import io
 import ipaddress
 import struct
 import sys
@@ -658,3 +660,143 @@ def test_a_method_the_record_defines_is_not_replaced() -> None:
 
     assert Custom(1).build() == b"custom"
     assert Custom.parse(b"\x01\x00") == Custom(1)
+
+
+# Parsing from streams.
+
+
+@dataclass
+class Message(BinaryStruct, byte_order="<"):
+    kind: u16
+    body: Annotated[bytes, Prefixed(U32_LE, GREEDY_BYTES)]
+    name: Annotated[str, Aligned(4, Prefixed(U16_BE, CSTRING))]
+
+
+MESSAGE = Message(3, b"payload", "hey")
+
+
+class RecordingStream:
+    """A binary stream that records each read size and returns at most ``chunk`` bytes per read."""
+
+    def __init__(self, data: bytes, chunk: int = 1 << 30) -> None:
+        self.stream = io.BytesIO(data)
+        self.chunk = chunk
+        self.sizes: list[int] = []
+
+    def read(self, size: int) -> bytes:
+        self.sizes.append(size)
+        return self.stream.read(min(size, self.chunk))
+
+
+@pytest.mark.parametrize("chunk", [1, 3, 1 << 30])
+def test_parse_stream_consumes_exactly_the_value(chunk: int) -> None:
+    raw = MESSAGE.build()
+    stream = RecordingStream(raw + RECORD_BYTES + b"next", chunk)
+    assert Message.parse_stream(stream.read) == MESSAGE
+    assert stream.stream.tell() == len(raw)
+    assert Record.parse_stream(stream.read) == RECORD
+    assert stream.stream.read() == b"next"
+
+
+def test_parse_stream_reads_only_the_missing_bytes() -> None:
+    stream = RecordingStream(MESSAGE.build())
+    Message.parse_stream(stream.read)
+    # The minimum (the fixed part and both lengths), the rest of the body, the name's length, the name, padding.
+    assert stream.sizes == [Message.SIZE + 4 + 2, len(b"payload") - 2, 2, len(b"hey\0"), 2]
+
+
+def test_parse_stream_codecs() -> None:
+    raw = Switch(U8, {1: Prefixed(U8, GREEDY_BYTES)}).build((1, b"ab")) + U32_LE.build(7) + b"tail"
+    stream = io.BytesIO(raw)
+    assert Switch(U8, {1: Prefixed(U8, GREEDY_BYTES)}).parse_stream(stream.read) == (1, b"ab")
+    assert U32_LE.parse_stream(stream.read) == 7
+    assert stream.read() == b"tail"
+
+
+@pytest.mark.parametrize(
+    ("codec", "raw", "value", "sizes"),
+    [
+        # The minimum is 3 bytes: the u8, the length and a terminator.
+        (Tuple(U8, Prefixed(U8, GREEDY_BYTES), CSTRING), b"\x07\x02abc\0", (7, b"ab", "c"), [3, 1, 1, 1]),
+        (PrefixedArray(U8, U16_BE), b"\x02\x00\x01\x00\x02", [1, 2], [1, 2, 2]),
+        (Aligned(4, Prefixed(U8, GREEDY_BYTES)), b"\x02ab\0", b"ab", [1, 2, 1]),
+        (Tuple(Bytes(3)), b"abc", (b"abc",), [3]),
+    ],
+)
+def test_parse_stream_starts_with_the_minimum_size(codec, raw: bytes, value, sizes: list[int]) -> None:
+    stream = RecordingStream(raw + b"next")
+    assert codec.parse_stream(stream.read) == value
+    assert stream.sizes == sizes
+    assert stream.stream.read() == b"next"
+
+
+def test_parse_stream_cstring_reads_a_byte_at_a_time() -> None:
+    stream = RecordingStream(b"abc\0rest")
+    assert CSTRING.parse_stream(stream.read) == "abc"
+    assert stream.sizes == [1, 1, 1, 1]
+    assert stream.stream.read() == b"rest"
+
+
+def test_parse_stream_greedy_value_needs_a_prefix() -> None:
+    with pytest.raises(BinaryParseError, match="greedy") as e:
+        GREEDY_BYTES.parse_stream(io.BytesIO(b"data").read)
+    assert not isinstance(e.value, TruncatedDataError)
+
+
+def test_parse_stream_ended() -> None:
+    raw = MESSAGE.build()
+    with pytest.raises(TruncatedDataError) as e:
+        Message.parse_stream(io.BytesIO(raw[:-3]).read)
+    assert e.value.offset == len(raw) - 3
+
+
+def test_parse_stream_malformed_value_reads_no_further() -> None:
+    # The name's prefix says 3 bytes, but they hold no terminator: more data cannot fix that.
+    raw = Message(3, b"", "x").build()[: Message.SIZE + 4] + b"\x00\x03abc" + b"more"
+    stream = io.BytesIO(raw)
+    with pytest.raises(TruncatedDataError) as e:
+        Message.parse_stream(stream.read)
+    assert e.value.needed is None
+    assert stream.tell() == len(raw) - len(b"more")
+
+
+def test_parse_stream_wrong_constant_fails_before_reading_on() -> None:
+    stream = io.BytesIO(b"XX" + RECORD_BYTES[2:] + b"more")
+    with pytest.raises(UnexpectedConstantError):
+        Record.parse_stream(stream.read)
+    assert stream.tell() == Record.SIZE
+
+
+def test_truncated_data_error_located_keeps_needed() -> None:
+    error = TruncatedDataError("short")
+    error.needed = 5
+    error = error.located(record="R", field="f", offset=1)
+    assert (error.needed, error.record, error.field, error.offset) == (5, "R", "f", 1)
+    assert TruncatedDataError("short").needed is None
+
+
+def test_parse_stream_async() -> None:
+    async def scenario() -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_data(MESSAGE.build() + RECORD_BYTES[:5])
+        reader.feed_eof()
+        assert await Message.parse_stream_async(reader.readexactly) == MESSAGE
+        with pytest.raises(asyncio.IncompleteReadError):
+            await Record.parse_stream_async(reader.readexactly)
+
+    asyncio.run(scenario())
+
+
+def test_parse_stream_async_waits_for_data() -> None:
+    async def scenario() -> None:
+        reader = asyncio.StreamReader()
+        raw = MESSAGE.build()
+        task = asyncio.ensure_future(Message.parse_stream_async(reader.readexactly))
+        for i in range(len(raw)):
+            reader.feed_data(raw[i : i + 1])
+            await asyncio.sleep(0)
+        reader.feed_data(b"next")
+        assert await task == MESSAGE
+        assert await reader.readexactly(4) == b"next"
+
+    asyncio.run(scenario())

@@ -1,0 +1,147 @@
+# Streams
+
+`parse` and `read` work on bytes that are already in memory. To parse a value straight from a file, a socket or
+an `asyncio` stream, without knowing its size up front, use `parse_stream` or `parse_stream_async`, which every
+codec with `parse` has (records, scalars and the combinators). Both parse one value and leave the stream right
+after it, so the next read starts at the next value.
+
+```python
+import asyncio
+import io
+from dataclasses import dataclass
+from typing import Annotated
+
+from bytestruct import (
+    CSTRING,
+    GREEDY_BYTES,
+    U32_LE,
+    BinaryParseError,
+    BinaryStruct,
+    Prefixed,
+    TruncatedDataError,
+    u16,
+)
+
+
+@dataclass
+class Message(BinaryStruct, byte_order="<"):
+    kind: u16
+    body: Annotated[bytes, Prefixed(U32_LE, GREEDY_BYTES)]
+
+
+stream = io.BytesIO(Message(1, b"first").build() + Message(2, b"second").build())
+assert Message.parse_stream(stream.read) == Message(1, b"first")
+assert Message.parse_stream(stream.read) == Message(2, b"second")
+assert stream.read() == b""
+```
+
+`parse_stream` takes a `read(size)` function that returns up to `size` bytes, and `b""` at the end of the
+stream, such as a binary file's `read`. `parse_stream_async` takes one to await, such as
+`asyncio.StreamReader.readexactly`:
+
+```python
+async def receive(reader: asyncio.StreamReader) -> list[Message]:
+    return [await Message.parse_stream_async(reader.readexactly) for _ in range(2)]
+
+
+async def main() -> list[Message]:
+    reader = asyncio.StreamReader()
+    reader.feed_data(Message(1, b"first").build() + Message(2, b"second").build())
+    return await receive(reader)
+
+
+assert asyncio.run(main()) == [Message(1, b"first"), Message(2, b"second")]
+```
+
+Errors the `read` function raises (`IncompleteReadError`, a closed connection, ...) propagate unchanged.
+
+## How much is read
+
+The value is parsed from the bytes read so far. The first read is the size every value of the codec has at
+least (a record's fixed-size part, the length of a `Prefixed`, the count of a `PrefixedArray`, ...), and while
+the value extends past the bytes read, exactly the missing bytes are read and it is parsed again. In `Message`
+above, that is the fixed part with the body's length, then the body:
+
+```python
+sizes = []
+source = io.BytesIO(Message(1, b"first").build() + b"next")
+
+
+def recording_read(size: int) -> bytes:
+    sizes.append(size)
+    return source.read(size)
+
+
+Message.parse_stream(recording_read)
+assert sizes == [6, 5]
+assert source.read() == b"next"
+```
+
+Only bytes the value certainly covers are read, so nothing after it is consumed. Each extra read parses the
+value again, from its start (see [Performance](#performance)).
+
+## What can be parsed
+
+- **Greedy values** (`GREEDY_BYTES`, `GREEDY_STRING`) run to the end of their data, and a stream has no end to
+  stop at. Inside a `Prefixed` they work as usual. At the top level, or directly in a record, they raise
+  `BinaryParseError`:
+
+```python
+try:
+    GREEDY_BYTES.parse_stream(io.BytesIO(b"data").read)
+except BinaryParseError as e:
+    assert str(e) == "a greedy value cannot be parsed from a stream; prefix it with its length"
+```
+
+- **C strings** outside a `Prefixed` are read a byte at a time, since their terminator could be anywhere:
+
+```python
+stream = io.BytesIO(b"name\0rest")
+assert CSTRING.parse_stream(stream.read) == "name"
+assert stream.read() == b"rest"
+```
+
+- **A stream that ends** before the value is complete raises `TruncatedDataError`, located at the end of the
+  data that was read:
+
+```python
+try:
+    Message.parse_stream(io.BytesIO(Message(1, b"first").build()[:-2]).read)
+except TruncatedDataError as e:
+    assert str(e) == "at offset 9: stream ended: expected 2 more bytes"
+```
+
+- **Malformed values** fail without reading further than the minimum size: a wrong constant as soon as it is
+  parsed, and a value cut short inside a `Prefixed` (which more data cannot fix) right away.
+
+## Performance
+
+`parse_stream` is slower than reading the bytes by hand and calling `parse`: it trades speed for not having to
+know where a value ends. A value with a variable part (a `Prefixed` body, ...) is parsed at least twice, since
+its length is only known after the first attempt, and each failed attempt raises and catches an error. A C
+string outside a `Prefixed` costs a failed attempt per character.
+
+Measured on an Apple M5 Pro with Python 3.14, against the hand-written equivalent (`Header.parse` of an
+exact-size read, then a read of `header.length` bytes):
+
+| Value | Hand-written | `parse_stream` |
+| --- | --- | --- |
+| 16-byte fixed record, from `BytesIO` | 0.16 µs | 0.39 µs |
+| 6-byte header and 16-byte body, from `BytesIO` | 0.20 µs | 1.97 µs |
+| 6-byte header and 64 KiB body, from `BytesIO` | 1.17 µs | 5.73 µs |
+| 64-byte body, asyncio TCP loopback | 0.70 µs | 2.60 µs |
+| 64 KiB body, asyncio TCP loopback | 12.40 µs | 19.10 µs |
+| 64-character C string, from `BytesIO` | 1.62 µs | 50.53 µs |
+
+It makes the same number of `read` calls as the hand-written code, so the difference matters less as I/O
+dominates. On a hot path (many small messages per second), read a fixed-size header and its body by hand.
+
+## Custom codecs
+
+A [custom codec](codecs.md#writing-your-own-codec) streams when it reads through the `ByteReader` methods
+(`read`, `skip`, `unpack`, `sub`, ...), which is how the built-in codecs read. A codec that catches
+`TruncatedDataError` to try something else cannot be parsed from a stream correctly: it would make that choice
+on the bytes read so far.
+
+While a value is parsed from a stream, a `TruncatedDataError` past the bytes read so far carries `needed`, the
+number of bytes missing; it is `None` when more data cannot help.

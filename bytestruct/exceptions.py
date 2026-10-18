@@ -1,6 +1,6 @@
 """Errors raised while parsing or building binary data."""
 
-from typing import Optional
+from typing import Optional, cast
 
 __all__ = [
     "BinaryBuildError",
@@ -69,7 +69,22 @@ class BinaryBuildError(BinaryDataError):
 
 
 class TruncatedDataError(BinaryParseError):
-    """Binary wire data ended before the structure being parsed was complete."""
+    """Binary wire data ended before the structure being parsed was complete.
+
+    ``needed`` is set while parsing from a stream (``parse_stream``/``parse_stream_async``): the number of bytes
+    missing after the end of the data read so far, which the value certainly extends over. It is ``None``
+    otherwise, and when more data cannot help (the value is cut short inside a length-prefixed window).
+    """
+
+    needed: Optional[int] = None
+
+    def located(
+        self, *, record: Optional[str] = None, field: Optional[str] = None, offset: Optional[int] = None
+    ) -> "TruncatedDataError":
+        """Return a copy of this error (same type) with any missing location filled in."""
+        error = cast(TruncatedDataError, super().located(record=record, field=field, offset=offset))
+        error.needed = self.needed
+        return error
 
 
 class UnexpectedConstantError(BinaryParseError):

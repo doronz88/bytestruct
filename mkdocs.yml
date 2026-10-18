@@ -74,6 +74,7 @@ plugins:
           - records.md
           - codecs.md
           - byte-reader.md
+          - streams.md
           - errors.md
           - extending.md
           - cookbook.md
@@ -109,6 +110,7 @@ nav:
       - Records: records.md
       - Codecs: codecs.md
       - ByteReader: byte-reader.md
+      - Streams: streams.md
       - Errors: errors.md
       - Extending bytestruct: extending.md
       - Cookbook: cookbook.md

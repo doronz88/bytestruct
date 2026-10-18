@@ -648,6 +648,31 @@ def first_byte(data: BytesLike) -> int:
 assert first_byte(b"\x01") == first_byte(bytearray(b"\x01")) == first_byte(memoryview(b"\x01")) == 1
 ```
 
+### `parse_stream`, `parse_stream_async`
+
+Every codec with `parse` (records, scalars and the combinators) parses one value from a stream too, consuming
+exactly its bytes:
+
+```python
+import asyncio
+import io
+
+stream = io.BytesIO(bytes.fromhex("00 02 68 69 ff"))
+assert Prefixed(U16_BE, GREEDY_STRING).parse_stream(stream.read) == "hi"
+assert stream.read() == b"\xff"
+
+
+async def first_value() -> str:
+    reader = asyncio.StreamReader()
+    reader.feed_data(bytes.fromhex("00 02 68 69 ff"))
+    return await Prefixed(U16_BE, GREEDY_STRING).parse_stream_async(reader.readexactly)
+
+
+assert asyncio.run(first_value()) == "hi"
+```
+
+See [Streams](streams.md) for the rules.
+
 ### Exceptions
 
 ```python
