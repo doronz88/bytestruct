@@ -70,3 +70,28 @@ the package and publishes it to PyPI with trusted publishing:
 ```shell
 gh release create vX.Y.Z --target master --title vX.Y.Z --generate-notes
 ```
+
+Tags are `vMAJOR.MINOR.PATCH`: a patch release for fixes, a minor one for new API. Use `--target master`, not a
+commit SHA (which fails with `Release.target_commitish is invalid`).
+
+`--generate-notes` only lists the pull requests, so replace the notes with the house style of the previous
+releases (`gh release view v0.2.0`):
+
+- A `## Highlights` section with one `###` subsection per notable change, prefixed with an emoji (`✨` feature,
+  `🐛` fix, `⚡` performance, `📚` docs), each a short paragraph on what changes for users, with an example for
+  new API.
+- `## What's Changed` as the commit history, newest first, one line per commit:
+  `* <sha7> <subject> (#<pr>) (@<login>)`. Leave out merge commits: their subject names a branch, not a change.
+- The generated `**Full Changelog**` line.
+
+```shell
+PREV=$(git describe --tags --abbrev=0 vX.Y.Z^)
+for sha in $(git log --no-merges "$PREV..vX.Y.Z" --format=%H); do
+  pr=$(gh api "repos/doronz88/bytestruct/commits/$sha/pulls" --jq '.[0].number')
+  login=$(gh api "repos/doronz88/bytestruct/commits/$sha" --jq '.author.login')
+  echo "* $(git rev-parse --short=7 "$sha") $(git show -s --format=%s "$sha") (#$pr) (@$login)"
+done
+gh release edit vX.Y.Z --notes-file notes.md
+```
+
+Editing the notes does not publish again.
